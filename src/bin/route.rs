@@ -27,7 +27,7 @@ async fn main() -> Result<(), anyhow::Error> {
         &args.valhalla_endpoint,
     );
     let start_location = LatLng::from_degrees(47.6237098, -122.3222182);
-    let target_location = LatLng::from_degrees(47.56104, -122.3785447);
+    let target_location = LatLng::from_degrees(47.6501965, -122.3521259);
     let start_time = Instant::now();
     for _ in 0..1 {
         let itinerary = router

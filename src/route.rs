@@ -71,7 +71,6 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
         max_transfers: Option<usize>,
         max_transfer_delta: Option<usize>,
     ) -> Vec<(Step, usize)> {
-        let start_time = Instant::now();
         let start_stops = self.nearest_stops(
             start_location,
             max_candidate_stops_each_side,
@@ -81,11 +80,6 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
             target_location,
             max_candidate_stops_each_side,
             max_distance_meters,
-        );
-        dbg!(
-            "nearest_stops",
-            Instant::now().duration_since(start_time),
-            start_stops.len()
         );
 
         let target_leg_matrix_response = matrix_request(
@@ -111,19 +105,20 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
         .await
         .unwrap();
 
-        dbg!("routing", Instant::now().duration_since(start_time));
         let target_costs: Vec<(usize, u32)> = target_leg_matrix_response.sources_to_targets[0]
             .iter()
             .filter_map(|line_item| {
                 if line_item.to_index.is_some() && line_item.time.is_some() {
-                    Some((line_item.from_index.unwrap(), line_item.time.unwrap()))
+                    Some((
+                        target_stops[line_item.from_index.unwrap()].id(),
+                        line_item.time.unwrap(),
+                    ))
                 } else {
                     None
                 }
             })
             .collect();
 
-        dbg!("assembly", Instant::now().duration_since(start_time));
         let mut context = RouterContext {
             best_times_global: vec![None; self.timetable.stop_count()],
             best_times_per_round: Vec::new(),
@@ -156,16 +151,14 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
                 trip: None,
             }],
         };
-        dbg!(
-            "context creation",
-            Instant::now().duration_since(start_time)
-        );
         context
             .init(route_start_time, start_location, &start_stops)
             .await;
-        dbg!("context init", Instant::now().duration_since(start_time));
         context.route().await;
-        dbg!("context route", Instant::now().duration_since(start_time));
+
+        for target in target_stops {
+            dbg!(&context.best_times_global[target.id()]);
+        }
 
         // TODO: Redo all of this once `seconds_since_service_day_start` is private.
         let (best_itinerary, last_leg_cost) = target_costs
@@ -475,12 +468,11 @@ where
         )
         .await
         .unwrap();
-        dbg!(Instant::now().duration_since(start_time), starts.len());
         let start_costs: HashMap<usize, u32> = start_leg_matrix_response.sources_to_targets[0]
             .iter()
             .filter_map(|line_item| {
                 if line_item.to_index.is_some() && line_item.time.is_some() {
-                    Some((line_item.from_index.unwrap(), line_item.time.unwrap()))
+                    Some((line_item.to_index.unwrap(), line_item.time.unwrap()))
                 } else {
                     None
                 }
@@ -719,8 +711,6 @@ where
                     .iter()
                     .rev()
                 {
-                    // dbg!(trip);
-                    // dbg!(trip.stop_times(self.timetable).len());
                     let trip_stop_time = &trip.stop_times(self.timetable)[stop_route.stop_seq()];
                     if &trip_stop_time.departure().seconds_since_service_day_start
                         < &not_before.seconds_since_service_day_start
