@@ -1,0 +1,36 @@
+[package]
+name = "farebox"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0.71"
+chrono = "0.4.24"
+chrono-tz = "0.8.2"
+clap = { version = "4.3.0", features = ["derive"] }
+env_logger = "0.10.0"
+gtfs-structures = "0.34.0"
+log = "0.4.17"
+rayon = "1.7.0"
+redb = "0.17.0"
+reqwest = "0.11.18"
+rstar = { version = "0.11.0", features = ["serde"] }
+s2 = "0.0.12"
+thiserror = "1.0.40"
+tokio = { version = "1", features = ["full"] }
+approx = "0.5.1"
+serde = { version = "1.0.163", features = ["derive"] }
+rmp-serde = "1.1.1"
+serde_json = "1.0.96"
+flatdata = "0.5.3"
+bytemuck = { version = "1.13.1", features = ["derive"] }
+memmap2 = "0.6.2"
+
+[build-dependencies]
+flatdata = "0.5.3"
+
+[profile.release-debug]
+inherits = "release"
+debug = true

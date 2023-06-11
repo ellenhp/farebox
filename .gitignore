@@ -1,0 +1,6 @@
+/target
+*.fdata
+*.zip
+log
+profile.json
+*.tt
