@@ -322,8 +322,7 @@ impl<'a> InMemoryTimetableBuilder {
                     let trip_days = gtfs.trip_days(&trip.service_id, start_date.clone());
 
                     for day in trip_days {
-                        // TODO: Multi-day routing requires us to sort these in time.
-                        if day > 0 {
+                        if day > 3 {
                             continue;
                         }
                         for (stop_seq, stop_time) in trip.stop_times.iter().enumerate() {
