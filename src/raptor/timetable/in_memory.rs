@@ -285,16 +285,17 @@ impl<'a> InMemoryTimetableBuilder {
                         .agency_id
                         .clone()
                         .unwrap_or(String::new());
-                    let agency_tz: Tz = if let Some(agency) = agencies.get(&trip_agency_id) {
-                        agency.timezone.parse().unwrap()
+                    let trip_agency = if let Some(agency) = agencies.get(&trip_agency_id) {
+                        agency
                     } else {
                         if agencies.len() == 1 {
-                            agencies.values().next().unwrap().timezone.parse().unwrap()
+                            agencies.values().next().unwrap()
                         } else {
                             warn!("No matching agency: {}, {:?}", trip_agency_id, agencies);
                             continue;
                         }
                     };
+                    let agency_tz: Tz = trip_agency.timezone.parse().unwrap();
                     let first_trip_stop_time = total_trip_stop_times;
 
                     let trip = gtfs.get_trip(gtfs_trip_id).unwrap();
@@ -350,7 +351,7 @@ impl<'a> InMemoryTimetableBuilder {
                             last_trip_stop_time: total_trip_stop_times,
                         };
                         self.timetable.route_trips.push(trip);
-                        let agency_name = agencies[&trip_agency_id].name.clone();
+                        let agency_name = trip_agency.name.clone();
                         let metadata = TripMetadata {
                             agency_name: Some(agency_name),
                             headsign: gtfs.trips[gtfs_trip_id].clone().trip_headsign,
