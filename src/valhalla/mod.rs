@@ -1,4 +1,5 @@
 use anyhow::Ok;
+use log::debug;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
@@ -39,6 +40,7 @@ pub async fn matrix_request(
         endpoint,
         serde_json::to_string(&request)?
     );
+    debug!("Sending matrix request: {}", url);
     let body = client.get(url).send().await?.text().await?;
     Ok(serde_json::from_str(&body)?)
 }

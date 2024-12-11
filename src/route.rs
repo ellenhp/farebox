@@ -14,16 +14,16 @@ use crate::raptor::timetable::{Route, RouteStop, Stop, Time, Timetable, Trip};
 pub struct Router<'a, T: Timetable<'a>> {
     timetable: T,
     client: Client,
-    valhalla_endpoint: String,
+    valhalla_endpoint: Option<String>,
     _phantom: &'a PhantomData<()>,
 }
 
 impl<'a, T: Timetable<'a>> Router<'a, T> {
-    pub fn new(timetable: T, valhalla_endpoint: &str) -> Router<'a, T> {
+    pub fn new(timetable: T, valhalla_endpoint: Option<String>) -> Router<'a, T> {
         Router {
             timetable,
             client: Client::new(),
-            valhalla_endpoint: valhalla_endpoint.to_string(),
+            valhalla_endpoint,
             _phantom: &PhantomData,
         }
     }
@@ -78,42 +78,49 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
             max_distance_meters,
         );
 
-        let target_leg_matrix_response = matrix_request(
-            &self.client,
-            &self.valhalla_endpoint,
-            MatrixRequest {
-                sources: target_stops
-                    .iter()
-                    .map(|target| target.location())
-                    .map(|location| ValhallaLocation {
-                        lat: location.lat.deg(),
-                        lon: location.lng.deg(),
-                    })
-                    .collect(),
-                targets: vec![ValhallaLocation {
-                    lat: target_location.lat.deg(),
-                    lon: target_location.lng.deg(),
-                }],
-                costing: "pedestrian".to_string(),
-                matrix_locations: target_stops.len(),
-            },
-        )
-        .await
-        .unwrap();
+        dbg!(&start_stops, &target_stops);
 
-        let target_costs: Vec<(usize, u32)> = target_leg_matrix_response.sources_to_targets[0]
-            .iter()
-            .filter_map(|line_item| {
-                if line_item.to_index.is_some() && line_item.time.is_some() {
-                    Some((
-                        target_stops[line_item.from_index.unwrap()].id(),
-                        line_item.time.unwrap(),
-                    ))
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let target_costs: Vec<(usize, u32)> =
+            if let Some(valhalla_endpoint) = &self.valhalla_endpoint {
+                let target_leg_matrix_response = matrix_request(
+                    &self.client,
+                    &valhalla_endpoint,
+                    MatrixRequest {
+                        sources: target_stops
+                            .iter()
+                            .map(|target| target.location())
+                            .map(|location| ValhallaLocation {
+                                lat: location.lat.deg(),
+                                lon: location.lng.deg(),
+                            })
+                            .collect(),
+                        targets: vec![ValhallaLocation {
+                            lat: target_location.lat.deg(),
+                            lon: target_location.lng.deg(),
+                        }],
+                        costing: "pedestrian".to_string(),
+                        matrix_locations: target_stops.len(),
+                    },
+                )
+                .await
+                .unwrap();
+
+                target_leg_matrix_response.sources_to_targets[0]
+                    .iter()
+                    .filter_map(|line_item| {
+                        if line_item.to_index.is_some() && line_item.time.is_some() {
+                            Some((
+                                target_stops[line_item.from_index.unwrap()].id(),
+                                line_item.time.unwrap(),
+                            ))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            } else {
+                target_stops.iter().map(|stop| (stop.id(), 0)).collect()
+            };
 
         let mut context = RouterContext {
             best_times_global: vec![None; self.timetable.stop_count()],
@@ -319,7 +326,7 @@ pub struct RouterContext<'a, T: Timetable<'a>> {
     max_transfers: Option<usize>,
     max_transfer_delta: Option<usize>,
     client: Client,
-    valhalla_endpoint: String,
+    valhalla_endpoint: Option<String>,
     step_log: Vec<InternalStep<'a>>,
 }
 
@@ -388,18 +395,15 @@ where
                     previous_step,
                 };
 
-                if is_best_global {
-                    self.best_times_global[stop.id()] = Some(InternalItinerary {
-                        final_time: arrival_time.clone(),
-                        last_step: self.step_log.len(),
-                    });
-
-                    self.marked_stops[stop.id()] = true;
-                }
+                self.best_times_global[stop.id()] = Some(InternalItinerary {
+                    final_time: arrival_time.clone(),
+                    last_step: self.step_log.len(),
+                });
                 self.best_times_per_round[round][stop.id()] = Some(InternalItinerary {
                     final_time: arrival_time.clone(),
                     last_step: self.step_log.len(),
                 });
+
                 self.marked_stops[stop.id()] = true;
                 self.step_log.push(latest_step);
 
@@ -418,39 +422,47 @@ where
             .push(vec![None; self.timetable.stop_count()]);
         dbg!(Instant::now().duration_since(start_time), starts.len());
 
-        let start_leg_matrix_response = matrix_request(
-            &self.client,
-            &self.valhalla_endpoint,
-            MatrixRequest {
-                sources: vec![ValhallaLocation {
-                    lat: start_location.lat.deg(),
-                    lon: start_location.lng.deg(),
-                }],
-                targets: starts
+        let start_costs: HashMap<usize, u32> =
+            if let Some(valhalla_endpoint) = &self.valhalla_endpoint {
+                let start_leg_matrix_response = matrix_request(
+                    &self.client,
+                    &valhalla_endpoint,
+                    MatrixRequest {
+                        sources: vec![ValhallaLocation {
+                            lat: start_location.lat.deg(),
+                            lon: start_location.lng.deg(),
+                        }],
+                        targets: starts
+                            .iter()
+                            .map(|start| start.location())
+                            .map(|location| ValhallaLocation {
+                                lat: location.lat.deg(),
+                                lon: location.lng.deg(),
+                            })
+                            .collect(),
+                        costing: "pedestrian".to_string(),
+                        matrix_locations: starts.len(),
+                    },
+                )
+                .await
+                .unwrap();
+                start_leg_matrix_response.sources_to_targets[0]
                     .iter()
-                    .map(|start| start.location())
-                    .map(|location| ValhallaLocation {
-                        lat: location.lat.deg(),
-                        lon: location.lng.deg(),
+                    .filter_map(|line_item| {
+                        if line_item.to_index.is_some() && line_item.time.is_some() {
+                            Some((line_item.to_index.unwrap(), line_item.time.unwrap()))
+                        } else {
+                            None
+                        }
                     })
-                    .collect(),
-                costing: "pedestrian".to_string(),
-                matrix_locations: starts.len(),
-            },
-        )
-        .await
-        .unwrap();
-        let start_costs: HashMap<usize, u32> = start_leg_matrix_response.sources_to_targets[0]
-            .iter()
-            .filter_map(|line_item| {
-                if line_item.to_index.is_some() && line_item.time.is_some() {
-                    Some((line_item.to_index.unwrap(), line_item.time.unwrap()))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
+                    .collect()
+            } else {
+                starts
+                    .iter()
+                    .enumerate()
+                    .map(|(i, _start)| (i, 0))
+                    .collect()
+            };
         for (stop_option_index, stop) in starts.iter().enumerate() {
             if let Some(cost) = start_costs.get(&stop_option_index) {
                 self.maybe_update_arrival_time_and_route(
@@ -469,20 +481,6 @@ where
     }
 
     fn earliest_trip_from(&self, route_stop: &RouteStop, not_before: &Time) -> Option<Trip> {
-        //     if &trip.stop_times(self.timetable)[route_stop.stop_seq()]
-        //     .departure()
-        //
-        //     >= &not_before
-        // {
-        //     Some((
-        //         trip,
-        //         trip.stop_times(self.timetable)[route_stop.stop_seq()]
-        //             .departure()
-        //             ,
-        //     ))
-        // } else {
-        //     None
-        // }
         let trips = route_stop.route(self.timetable).route_trips(self.timetable);
         let position = match trips.binary_search_by_key(not_before, |trip| {
             trip.stop_times(self.timetable)[route_stop.stop_seq()].departure()
@@ -656,12 +654,12 @@ where
                     // We don't actually need to handle the case where the departure hasn't been added because of the u32::MAX step at the beginning of do_round.
                     if trip_stop_time.departure() < marked_routes[route.id()].departure() {
                         marked_routes[route.id()] = *trip_stop_time;
+                        println!("{:?}", self.timetable.trip_metadata()[trip]);
                         // Any trips after this one do not need to be examined.
                         break;
                     }
                 }
             } else {
-                dbg!(marked_routes[route.id()].trip_index);
                 if route.first_route_trip > marked_routes[route.id()].trip_index {
                     dbg!(route.first_route_trip, marked_routes[route.id()].trip_index);
                 }
@@ -694,6 +692,7 @@ where
         while marked_stops {
             if let Some(round_bound) = round_bound {
                 if self.round >= round_bound as u32 {
+                    dbg!(self.round, round_bound);
                     break;
                 }
             }

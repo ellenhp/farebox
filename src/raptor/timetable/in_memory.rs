@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     sync::{Arc, Mutex},
+    u32,
 };
 
 use chrono::{Days, Local, TimeDelta, TimeZone};
@@ -164,8 +165,13 @@ pub enum InMemoryTimetableBuilderError {
 
 #[derive(Debug)]
 pub struct InMemoryTimetableBuilder {
+    next_stop_id: usize,
+    next_stop_route_id: usize,
     next_route_id: usize,
+    next_route_trip_id: usize,
+    next_route_stop_id: usize,
     next_trip_id: usize,
+    next_trip_stop_time_id: usize,
     timetable: InMemoryTimetable,
     valhalla_endpoint: Option<String>,
 }
@@ -176,8 +182,13 @@ impl<'a> InMemoryTimetableBuilder {
         valhalla_endpoint: Option<String>,
     ) -> InMemoryTimetableBuilder {
         InMemoryTimetableBuilder {
+            next_stop_id: 0,
+            next_stop_route_id: 0,
             next_route_id: 0,
+            next_route_trip_id: 0,
+            next_route_stop_id: 0,
             next_trip_id: 0,
+            next_trip_stop_time_id: 0,
             timetable,
             valhalla_endpoint: valhalla_endpoint,
         }
@@ -193,7 +204,8 @@ impl<'a> InMemoryTimetableBuilder {
 
         let mut stop_to_stop_id_map = BTreeMap::new();
         for (gtfs_stop_id, _stop) in &gtfs.stops {
-            stop_to_stop_id_map.insert(gtfs_stop_id.clone(), stop_to_stop_id_map.len());
+            stop_to_stop_id_map.insert(gtfs_stop_id.clone(), self.next_stop_id);
+            self.next_stop_id += 1;
         }
 
         let mut route_to_route_id: BTreeMap<Vec<usize>, usize> = BTreeMap::new();
@@ -210,9 +222,7 @@ impl<'a> InMemoryTimetableBuilder {
                 *id
             } else {
                 let id = self.next_route_id;
-                let old_size = route_to_route_id.len();
                 route_to_route_id.insert(trip_stops.clone(), id);
-                assert_ne!(old_size, route_to_route_id.len());
                 self.next_route_id += 1;
                 id
             };
@@ -262,14 +272,11 @@ impl<'a> InMemoryTimetableBuilder {
         debug!("Done sorting");
 
         {
-            let mut total_route_stops = 0usize;
-            let mut total_route_trips = 0usize;
-            let mut total_trip_stop_times = 0usize;
             for (route_id, route_stop_list) in route_id_to_route_map.iter() {
                 let route = Route {
                     route_index: *route_id,
-                    first_route_stop: total_route_stops,
-                    first_route_trip: total_route_trips,
+                    first_route_stop: self.next_route_stop_id,
+                    first_route_trip: self.next_route_trip_id,
                 };
                 self.timetable.routes.push(route);
                 // TODO: Feed ID.
@@ -280,7 +287,7 @@ impl<'a> InMemoryTimetableBuilder {
                         stop_index: *stop_id,
                         stop_seq,
                     });
-                    total_route_stops += 1;
+                    self.next_route_stop_id += 1;
                 }
                 let trips_pre_sort = route_id_to_trip_list.get(&route_id).unwrap().clone();
                 let mut trips = trips_pre_sort.clone();
@@ -309,13 +316,14 @@ impl<'a> InMemoryTimetableBuilder {
                         }
                     };
                     let agency_tz: Tz = trip_agency.timezone.parse().unwrap();
-                    let first_trip_stop_time = total_trip_stop_times;
+                    let first_trip_stop_time = self.next_trip_stop_time_id;
 
                     let trip = gtfs.get_trip(gtfs_trip_id).unwrap();
                     let trip_days = gtfs.trip_days(&trip.service_id, start_date.clone());
 
                     for day in trip_days {
-                        if day > 3 {
+                        // TODO: Multi-day routing requires us to sort these in time.
+                        if day > 0 {
                             continue;
                         }
                         for (stop_seq, stop_time) in trip.stop_times.iter().enumerate() {
@@ -333,35 +341,29 @@ impl<'a> InMemoryTimetableBuilder {
                                 .checked_sub_signed(TimeDelta::hours(12))
                                 .unwrap();
 
-                            let arrival_time = if let Some(arrival_time) = stop_time.arrival_time {
-                                day_start
-                                    .checked_add_signed(TimeDelta::seconds(arrival_time as i64))
-                                    .unwrap()
-                            } else {
-                                continue;
-                            };
-                            let departure_time = if let Some(departure_time) =
-                                stop_time.departure_time
-                            {
-                                day_start
-                                    .checked_add_signed(TimeDelta::seconds(departure_time as i64))
-                                    .unwrap()
-                            } else {
-                                continue;
-                            };
+                            let arrival_time = day_start
+                                .checked_add_signed(TimeDelta::seconds(
+                                    stop_time.arrival_time.unwrap_or(u32::MAX) as i64,
+                                ))
+                                .unwrap();
+                            let departure_time = day_start
+                                .checked_add_signed(TimeDelta::seconds(
+                                    stop_time.departure_time.unwrap_or(u32::MAX) as i64,
+                                ))
+                                .unwrap();
                             self.timetable.trip_stop_times.push(TripStopTime::new(
-                                total_route_trips,
+                                self.next_route_trip_id,
                                 stop_seq,
                                 arrival_time,
                                 departure_time,
                             ));
-                            total_trip_stop_times += 1;
+                            self.next_trip_stop_time_id += 1;
                         }
                         let trip = Trip {
-                            trip_index: total_route_trips,
+                            trip_index: self.next_route_trip_id,
                             route_index: *route_id,
                             first_trip_stop_time,
-                            last_trip_stop_time: total_trip_stop_times,
+                            last_trip_stop_time: self.next_trip_stop_time_id,
                         };
                         self.timetable.route_trips.push(trip);
                         let agency_name = trip_agency.name.clone();
@@ -376,20 +378,14 @@ impl<'a> InMemoryTimetableBuilder {
                         };
                         self.timetable.trip_metadata_map.insert(trip, metadata);
 
-                        total_route_trips += 1;
+                        self.next_route_trip_id += 1;
                     }
                 }
             }
         }
 
         {
-            let mut total_stops = 0usize;
-            let mut total_stop_routes = 0usize;
-
-            for (stop_seq, (stop_id, gtfs_stop_id)) in stop_id_to_stop_map.iter().enumerate() {
-                assert_eq!(stop_seq, *stop_id);
-                assert_eq!(stop_seq, total_stops);
-
+            for (stop_id, gtfs_stop_id) in stop_id_to_stop_map.iter() {
                 let gtfs_stop = gtfs.get_stop(&gtfs_stop_id).unwrap();
                 let lat = gtfs_stop.latitude.expect("Unknown location");
                 let lng = gtfs_stop.longitude.expect("Unknown location");
@@ -397,7 +393,7 @@ impl<'a> InMemoryTimetableBuilder {
                 let stop = Stop {
                     stop_index: *stop_id,
                     s2cell: s2cell.0,
-                    first_stop_route_index: total_stop_routes,
+                    first_stop_route_index: self.next_stop_route_id,
                 };
                 self.timetable.stops.push(stop);
                 self.timetable
@@ -422,14 +418,13 @@ impl<'a> InMemoryTimetableBuilder {
                         route_index: *route,
                         stop_seq: seq,
                     });
-                    total_stop_routes += 1;
+                    self.next_stop_route_id += 1;
                 }
                 let location_cartesian = lat_lng_to_cartesian(lat, lng);
                 self.timetable.rtree.lock().unwrap().insert(IndexedStop {
                     coords: location_cartesian,
                     id: *stop_id,
                 });
-                total_stops += 1;
             }
         }
 
@@ -437,6 +432,11 @@ impl<'a> InMemoryTimetableBuilder {
     }
 
     async fn calculate_transfers(&mut self) {
+        assert_eq!(
+            self.timetable.stops.len(),
+            self.timetable.rtree.lock().unwrap().size()
+        );
+
         let client = Client::new();
         debug!("Calculating transfer times");
         let transfers = {
@@ -459,7 +459,7 @@ impl<'a> InMemoryTimetableBuilder {
                         .enumerate()
                     {
                         let dist = dist_sq.sqrt();
-                        if dist > 1000f64 {
+                        if dist > 5000f64 {
                             break;
                         }
                         if count > 50 {

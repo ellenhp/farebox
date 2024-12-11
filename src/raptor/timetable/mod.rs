@@ -298,12 +298,6 @@ impl Time {
         )
     }
 
-    pub fn from_hms(hours: u32, minutes: u32, seconds: u32) -> Time {
-        Time {
-            epoch_seconds: seconds + minutes * 60 + hours * 3600,
-        }
-    }
-
     pub fn plus_seconds(&self, seconds: u32) -> Time {
         Time {
             epoch_seconds: self
@@ -315,6 +309,12 @@ impl Time {
 
     pub fn epoch_seconds(&self) -> u32 {
         return self.epoch_seconds;
+    }
+
+    pub fn from_epoch_seconds(seconds: u32) -> Time {
+        Time {
+            epoch_seconds: seconds,
+        }
     }
 
     pub fn epoch() -> Time {
