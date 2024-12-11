@@ -34,6 +34,7 @@ async fn main() {
             })
             .collect();
         let timetable = InMemoryTimetable::from_gtfs(&timetables, args.valhalla_endpoint).await;
+
         MmapTimetable::from_in_memory(&timetable, &args.base_path.into())
             .expect("Failed to build memory-mapped timetable.");
     } else {

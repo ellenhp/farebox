@@ -149,6 +149,7 @@ impl<'a> InMemoryTimetable {
                     .await
                     .unwrap();
             }
+            in_memory_timetable_builder.calculate_transfers().await;
             in_memory_timetable_builder.to_timetable()
         };
         timetable
@@ -432,8 +433,11 @@ impl<'a> InMemoryTimetableBuilder {
             }
         }
 
-        let client = Client::new();
+        Result::Ok(())
+    }
 
+    async fn calculate_transfers(&mut self) {
+        let client = Client::new();
         debug!("Calculating transfer times");
         let transfers = {
             let transfers: Vec<_> = self
@@ -546,7 +550,6 @@ impl<'a> InMemoryTimetableBuilder {
                 self.timetable.transfers.push(transfer);
             }
         }
-        Result::Ok(())
     }
 
     fn to_timetable(self) -> InMemoryTimetable {
