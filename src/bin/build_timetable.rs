@@ -10,9 +10,7 @@ struct BuildArgs {
     #[arg(short, long)]
     gtfs_path: String,
     #[arg(short, long)]
-    valhalla_endpoint: String,
-    #[arg(short, long)]
-    estimate_transfers: bool,
+    valhalla_endpoint: Option<String>,
 }
 
 #[tokio::main]
@@ -20,9 +18,7 @@ async fn main() {
     env_logger::init();
     let args = BuildArgs::parse();
     let gtfs = gtfs_structures::Gtfs::new(&args.gtfs_path).unwrap();
-    let timetable =
-        InMemoryTimetable::from_gtfs(&[gtfs], &args.valhalla_endpoint, args.estimate_transfers)
-            .await;
+    let timetable = InMemoryTimetable::from_gtfs(&[gtfs], args.valhalla_endpoint).await;
     MmapTimetable::from_in_memory(&timetable, &args.base_path.into())
         .expect("Failed to build memory-mapped timetable.");
 }

@@ -1,11 +1,12 @@
 pub mod in_memory;
 pub mod mmap;
 
-use std::collections::HashMap;
+use std::{collections::HashMap, u32};
 
 use bytemuck::{Pod, Zeroable};
-use chrono::{Days, NaiveDate, NaiveDateTime, NaiveTime};
+use chrono::{DateTime, Days, NaiveDate, NaiveDateTime, NaiveTime};
 
+use chrono_tz::Tz;
 use rstar::RTree;
 use s2::latlng::LatLng;
 use serde::{Deserialize, Serialize};
@@ -132,7 +133,7 @@ impl<'a> Trip {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct TripMetadata {
     pub headsign: Option<String>,
-    pub route_name: String,
+    pub route_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Copy, Pod, Zeroable)]
@@ -197,22 +198,45 @@ impl<'a> StopRoute {
 pub struct TripStopTime {
     pub(crate) trip_index: usize,
     pub(crate) route_stop_seq: usize,
-    pub(crate) arrival_time: u32,
-    pub(crate) departure_time: u32,
+    arrival_time: u32,
+    departure_time: u32,
 }
 
 impl<'a> TripStopTime {
     #[inline]
     pub fn arrival(&self) -> Time {
         Time {
-            seconds_since_service_day_start: self.arrival_time,
+            epoch_seconds: self.arrival_time,
         }
     }
 
     #[inline]
     pub fn departure(&self) -> Time {
         Time {
-            seconds_since_service_day_start: self.departure_time,
+            epoch_seconds: self.departure_time,
+        }
+    }
+
+    pub(crate) fn new(
+        trip_index: usize,
+        route_stop_seq: usize,
+        arrival_time: DateTime<Tz>,
+        departure_time: DateTime<Tz>,
+    ) -> TripStopTime {
+        TripStopTime {
+            trip_index,
+            route_stop_seq,
+            arrival_time: arrival_time.timestamp() as u32,
+            departure_time: departure_time.timestamp() as u32,
+        }
+    }
+
+    pub(crate) fn marked() -> TripStopTime {
+        TripStopTime {
+            trip_index: usize::MAX,
+            route_stop_seq: usize::MAX,
+            arrival_time: u32::MAX,
+            departure_time: u32::MAX,
         }
     }
 
@@ -258,45 +282,41 @@ impl<'a> Transfer {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Copy, Pod, Zeroable)]
 #[repr(C)]
 pub struct Time {
-    // TODO: Make this private once we do multi-agency routing, for time zone reasons.
-    pub(crate) seconds_since_service_day_start: u32,
+    epoch_seconds: u32,
 }
 
 impl Time {
     pub fn naive_date_time(&self, service_day: NaiveDate) -> NaiveDateTime {
         NaiveDate::and_time(
             &service_day
-                .checked_add_days(Days::new(
-                    (self.seconds_since_service_day_start / DAY_SECONDS) as u64,
-                ))
+                .checked_add_days(Days::new((self.epoch_seconds / DAY_SECONDS) as u64))
                 .unwrap(),
-            NaiveTime::from_num_seconds_from_midnight_opt(
-                self.seconds_since_service_day_start % DAY_SECONDS,
-                0,
-            )
-            .unwrap(),
+            NaiveTime::from_num_seconds_from_midnight_opt(self.epoch_seconds % DAY_SECONDS, 0)
+                .unwrap(),
         )
     }
 
     pub fn from_hms(hours: u32, minutes: u32, seconds: u32) -> Time {
         Time {
-            seconds_since_service_day_start: seconds + minutes * 60 + hours * 3600,
+            epoch_seconds: seconds + minutes * 60 + hours * 3600,
         }
     }
 
     pub fn plus_seconds(&self, seconds: u32) -> Time {
         Time {
-            seconds_since_service_day_start: self
-                .seconds_since_service_day_start
+            epoch_seconds: self
+                .epoch_seconds
                 .checked_add(seconds)
-                .unwrap_or(self.seconds_since_service_day_start),
+                .unwrap_or(self.epoch_seconds),
         }
     }
 
+    pub fn epoch_seconds(&self) -> u32 {
+        return self.epoch_seconds;
+    }
+
     pub fn epoch() -> Time {
-        Time {
-            seconds_since_service_day_start: 0,
-        }
+        Time { epoch_seconds: 0 }
     }
 }
 
@@ -309,7 +329,7 @@ mod test {
     #[test]
     fn time_with_24hr_service_day() {
         let time = Time {
-            seconds_since_service_day_start: 12 * 60 * 60,
+            epoch_seconds: 12 * 60 * 60,
         };
         let date_time = time.naive_date_time(NaiveDate::from_ymd_opt(2020, 1, 1).unwrap());
         assert_eq!(
@@ -322,7 +342,7 @@ mod test {
     #[test]
     fn time_with_25hr_service_day() {
         let time = Time {
-            seconds_since_service_day_start: 25 * 60 * 60,
+            epoch_seconds: 25 * 60 * 60,
         };
         let date_time = time.naive_date_time(NaiveDate::from_ymd_opt(2020, 1, 1).unwrap());
         assert_eq!(

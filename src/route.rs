@@ -124,12 +124,7 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
             best_times_per_round: Vec::new(),
             marked_stops: vec![false; self.timetable.stop_count()],
             marked_routes: RefCell::new(vec![
-                TripStopTime {
-                    trip_index: usize::MAX,
-                    route_stop_seq: usize::MAX,
-                    arrival_time: u32::MAX,
-                    departure_time: u32::MAX,
-                };
+                TripStopTime::marked();
                 self.timetable.routes().len()
             ]),
             timetable: &self.timetable,
@@ -137,8 +132,6 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
             targets: target_costs.clone(),
             max_transfers,
             max_transfer_delta,
-            start_location,
-            target_location,
             client: self.client.clone(),
             valhalla_endpoint: self.valhalla_endpoint.clone(),
             step_log: vec![InternalStep {
@@ -168,7 +161,7 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
                     .as_ref()
                     .map(|it| (it, *cost))
             })
-            .min_by_key(|(it, cost)| it.final_time.seconds_since_service_day_start + cost)
+            .min_by_key(|(it, cost)| it.final_time.epoch_seconds() + cost)
             .unwrap();
 
         let mut steps = vec![];
@@ -184,13 +177,11 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
             let from_location = from.location();
             steps.push((
                 Step::End(EndStep {
-                    last_stop: from.metadata(&self.timetable).name.clone(),
+                    last_stop: Some(from.metadata(&self.timetable).name.clone()),
                     last_stop_latlng: [from_location.lat.deg(), from_location.lng.deg()],
-                    last_stop_departure_epoch_seconds: step.arrival.seconds_since_service_day_start
-                        as u64,
+                    last_stop_departure_epoch_seconds: step.arrival.epoch_seconds() as u64,
                     end_latlng: [to.lat.deg(), to.lng.deg()],
-                    end_epoch_seconds: (step.arrival.seconds_since_service_day_start
-                        + last_leg_cost) as u64,
+                    end_epoch_seconds: (step.arrival.epoch_seconds() + last_leg_cost) as u64,
                 }),
                 step_cursor,
             ));
@@ -215,13 +206,12 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
             steps.push((
                 if step.route.is_none() {
                     Step::Transfer(TransferStep {
-                        from_stop: from.metadata(&self.timetable).name.clone(),
+                        from_stop: Some(from.metadata(&self.timetable).name.clone()),
                         from_stop_latlng: [from_location.lat.deg(), from_location.lng.deg()],
-                        to_stop: to.metadata(&self.timetable).name.clone(),
+                        to_stop: Some(to.metadata(&self.timetable).name.clone()),
                         to_stop_latlng: [to_location.lat.deg(), to_location.lng.deg()],
-                        departure_epoch_seconds: step.departure.seconds_since_service_day_start
-                            as u64,
-                        arrival_epoch_seconds: step.arrival.seconds_since_service_day_start as u64,
+                        departure_epoch_seconds: step.departure.epoch_seconds() as u64,
+                        arrival_epoch_seconds: step.arrival.epoch_seconds() as u64,
                     })
                 } else {
                     let to_location = to.location();
@@ -233,13 +223,12 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
                             .metadata(&self.timetable)
                             .route_name
                             .clone(),
-                        departure_stop: from.metadata(&self.timetable).name.clone(),
+                        departure_stop: Some(from.metadata(&self.timetable).name.clone()),
                         departure_stop_latlng: [from_location.lat.deg(), from_location.lng.deg()],
-                        departure_epoch_seconds: step.departure.seconds_since_service_day_start
-                            as u64,
-                        arrival_stop: to.metadata(&self.timetable).name.clone(),
+                        departure_epoch_seconds: step.departure.epoch_seconds() as u64,
+                        arrival_stop: Some(to.metadata(&self.timetable).name.clone()),
                         arrival_stop_latlng: [to_location.lat.deg(), to_location.lng.deg()],
-                        arrival_epoch_seconds: step.arrival.seconds_since_service_day_start as u64,
+                        arrival_epoch_seconds: step.arrival.epoch_seconds() as u64,
                         shape: "TODO".into(),
                     })
                 },
@@ -248,22 +237,6 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
             step_cursor = step.previous_step;
         }
         steps
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct FeedId(u32);
-
-#[derive(Debug, Clone, Copy)]
-struct TripCount(u32);
-
-impl TripCount {
-    pub fn increment(&self) -> TripCount {
-        TripCount(self.0 + 1)
-    }
-
-    pub fn get(&self) -> u32 {
-        self.0
     }
 }
 
@@ -295,11 +268,11 @@ pub struct BeginStep {
 
 #[derive(Debug, Clone)]
 pub struct TripStep {
-    pub on_route: String,
-    pub departure_stop: String,
+    pub on_route: Option<String>,
+    pub departure_stop: Option<String>,
     pub departure_stop_latlng: [f64; 2],
     pub departure_epoch_seconds: u64,
-    pub arrival_stop: String,
+    pub arrival_stop: Option<String>,
     pub arrival_stop_latlng: [f64; 2],
     pub arrival_epoch_seconds: u64,
     pub shape: String,
@@ -307,9 +280,9 @@ pub struct TripStep {
 
 #[derive(Debug, Clone)]
 pub struct TransferStep {
-    pub from_stop: String,
+    pub from_stop: Option<String>,
     pub from_stop_latlng: [f64; 2],
-    pub to_stop: String,
+    pub to_stop: Option<String>,
     pub to_stop_latlng: [f64; 2],
     pub departure_epoch_seconds: u64,
     pub arrival_epoch_seconds: u64,
@@ -317,7 +290,7 @@ pub struct TransferStep {
 
 #[derive(Debug, Clone)]
 pub struct EndStep {
-    pub last_stop: String,
+    pub last_stop: Option<String>,
     pub last_stop_latlng: [f64; 2],
     pub last_stop_departure_epoch_seconds: u64,
     pub end_latlng: [f64; 2],
@@ -333,8 +306,6 @@ pub enum Step {
 }
 
 pub struct RouterContext<'a, T: Timetable<'a>> {
-    start_location: LatLng,
-    target_location: LatLng,
     best_times_global: Vec<Option<InternalItinerary>>,
     best_times_per_round: Vec<Vec<Option<InternalItinerary>>>,
     marked_stops: Vec<bool>,
@@ -393,14 +364,12 @@ where
         if let InternalStepLocation::Stop(stop) = to {
             let is_better_than_destination_global =
                 if let Some(best_time) = self.best_time_to_target() {
-                    arrival_time.seconds_since_service_day_start
-                        < best_time.seconds_since_service_day_start
+                    arrival_time < best_time
                 } else {
                     true
                 };
             let is_best_global = if let Some(previous_best) = &self.best_times_global[stop.id()] {
-                &arrival_time.seconds_since_service_day_start
-                    < &previous_best.final_time.seconds_since_service_day_start
+                &arrival_time < &previous_best.final_time
             } else {
                 true
             };
@@ -499,28 +468,25 @@ where
     fn earliest_trip_from(&self, route_stop: &RouteStop, not_before: &Time) -> Option<Trip> {
         //     if &trip.stop_times(self.timetable)[route_stop.stop_seq()]
         //     .departure()
-        //     .seconds_since_service_day_start
-        //     >= &not_before.seconds_since_service_day_start
+        //
+        //     >= &not_before
         // {
         //     Some((
         //         trip,
         //         trip.stop_times(self.timetable)[route_stop.stop_seq()]
         //             .departure()
-        //             .seconds_since_service_day_start,
+        //             ,
         //     ))
         // } else {
         //     None
         // }
         let trips = route_stop.route(self.timetable).route_trips(self.timetable);
-        let position =
-            match trips.binary_search_by_key(&not_before.seconds_since_service_day_start, |trip| {
-                trip.stop_times(self.timetable)[route_stop.stop_seq()]
-                    .departure()
-                    .seconds_since_service_day_start
-            }) {
-                Ok(position) => position,
-                Err(position) => position,
-            };
+        let position = match trips.binary_search_by_key(not_before, |trip| {
+            trip.stop_times(self.timetable)[route_stop.stop_seq()].departure()
+        }) {
+            Ok(position) => position,
+            Err(position) => position,
+        };
         if position >= trips.len() {
             None
         } else {
@@ -532,12 +498,7 @@ where
         {
             let mut marked_routes = self.marked_routes.borrow_mut();
             for val in &mut (*marked_routes) {
-                *val = TripStopTime {
-                    trip_index: usize::MAX,
-                    route_stop_seq: usize::MAX,
-                    arrival_time: u32::MAX,
-                    departure_time: u32::MAX,
-                };
+                *val = TripStopTime::marked();
             }
             for (stop_id, stop_marked) in self.marked_stops.iter().enumerate() {
                 if !*stop_marked {
@@ -602,14 +563,11 @@ where
                                 .unwrap()
                                 .final_time,
                         ) {
-                            if trip.stop_times(self.timetable)[route_stop.stop_seq()]
-                                .arrival()
-                                .seconds_since_service_day_start
+                            if trip.stop_times(self.timetable)[route_stop.stop_seq()].arrival()
                                 < self.best_times_global[departure.route_stop(self.timetable).id()]
                                     .as_ref()
                                     .unwrap()
                                     .final_time
-                                    .seconds_since_service_day_start
                             {
                                 *current_trip = trip;
                             }
@@ -688,43 +646,35 @@ where
             if marked_routes[route.id()].trip_index == usize::MAX {
                 for trip in route.route_trips(self.timetable) {
                     let trip_stop_time = &trip.stop_times(self.timetable)[stop_route.stop_seq()];
-                    if &trip_stop_time.departure().seconds_since_service_day_start
-                        < &not_before.seconds_since_service_day_start
-                    {
+                    if &trip_stop_time.departure() < &not_before {
                         continue;
                     }
 
                     // We don't actually need to handle the case where the departure hasn't been added because of the u32::MAX step at the beginning of do_round.
-                    if trip_stop_time.departure().seconds_since_service_day_start
-                        < marked_routes[route.id()]
-                            .departure()
-                            .seconds_since_service_day_start
-                    {
+                    if trip_stop_time.departure() < marked_routes[route.id()].departure() {
                         marked_routes[route.id()] = *trip_stop_time;
                         // Any trips after this one do not need to be examined.
                         break;
                     }
                 }
             } else {
+                dbg!(marked_routes[route.id()].trip_index);
+                if route.first_route_trip > marked_routes[route.id()].trip_index {
+                    dbg!(route.first_route_trip, marked_routes[route.id()].trip_index);
+                }
                 for trip in route.route_trips(self.timetable)
                     [0..(marked_routes[route.id()].trip_index - route.first_route_trip)]
                     .iter()
                     .rev()
                 {
                     let trip_stop_time = &trip.stop_times(self.timetable)[stop_route.stop_seq()];
-                    if &trip_stop_time.departure().seconds_since_service_day_start
-                        < &not_before.seconds_since_service_day_start
-                    {
+                    if &trip_stop_time.departure() < &not_before {
                         // We are iterating in reverse, so nothing "after" this (before, temporally) needs to be examined.
                         break;
                     }
 
                     // We don't actually need to handle the case where the departure hasn't been added because of the u32::MAX step at the beginning of do_round.
-                    if trip_stop_time.departure().seconds_since_service_day_start
-                        < marked_routes[route.id()]
-                            .departure()
-                            .seconds_since_service_day_start
-                    {
+                    if trip_stop_time.departure() < marked_routes[route.id()].departure() {
                         marked_routes[route.id()] = *trip_stop_time;
                         // We are iterating in reverse, so we can't break here.
                     }

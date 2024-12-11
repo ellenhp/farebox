@@ -34,15 +34,11 @@ pub async fn matrix_request(
     endpoint: &str,
     request: MatrixRequest,
 ) -> Result<MatrixResponse, anyhow::Error> {
-    let body = client
-        .get(format!(
-            "{}/sources_to_targets?json={}",
-            endpoint,
-            serde_json::to_string(&request)?
-        ))
-        .send()
-        .await?
-        .text()
-        .await?;
+    let url = format!(
+        "{}/sources_to_targets?json={}",
+        endpoint,
+        serde_json::to_string(&request)?
+    );
+    let body = client.get(url).send().await?.text().await?;
     Ok(serde_json::from_str(&body)?)
 }

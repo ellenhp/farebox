@@ -1,9 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use chrono::{Duration, Utc};
+use chrono::{Days, Local, TimeDelta, TimeZone};
 use chrono_tz::Tz;
-use gtfs_structures::{Calendar, Gtfs};
-use log::{info, warn};
+use gtfs_structures::Gtfs;
+use log::{debug, info, warn};
 use reqwest::Client;
 use rstar::RTree;
 use s2::{cellid::CellID, latlng::LatLng};
@@ -126,18 +126,14 @@ impl<'a> InMemoryTimetable {
         }
     }
 
-    pub async fn from_gtfs(
-        gtfs: &[Gtfs],
-        valhalla_endpoint: &str,
-        estimate_transfers: bool,
-    ) -> InMemoryTimetable {
+    pub async fn from_gtfs(gtfs: &[Gtfs], valhalla_endpoint: Option<String>) -> InMemoryTimetable {
         let in_memory_timetable = InMemoryTimetable::new();
         let timetable = {
             let mut in_memory_timetable_builder =
                 InMemoryTimetableBuilder::new(in_memory_timetable, valhalla_endpoint);
             for gtfs in gtfs {
                 in_memory_timetable_builder
-                    .preprocess_gtfs(gtfs, estimate_transfers)
+                    .preprocess_gtfs(gtfs)
                     .await
                     .unwrap();
             }
@@ -153,72 +149,44 @@ pub enum InMemoryTimetableBuilderError {
     ParseError(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-struct FeedUniqueKey {
-    feed: usize,
-    key: String,
-}
-
 #[derive(Debug)]
 pub struct InMemoryTimetableBuilder {
-    next_feed_id: usize,
-    next_service_day_id: usize,
     next_route_id: usize,
     next_trip_id: usize,
-    next_stop_id: usize,
     timetable: InMemoryTimetable,
-    valhalla_endpoint: String,
+    valhalla_endpoint: Option<String>,
 }
 
 impl<'a> InMemoryTimetableBuilder {
-    fn new(timetable: InMemoryTimetable, valhalla_endpoint: &str) -> InMemoryTimetableBuilder {
+    fn new(
+        timetable: InMemoryTimetable,
+        valhalla_endpoint: Option<String>,
+    ) -> InMemoryTimetableBuilder {
         InMemoryTimetableBuilder {
-            next_feed_id: 0,
-            next_service_day_id: 0,
             next_route_id: 0,
             next_trip_id: 0,
-            next_stop_id: 0,
             timetable,
-            valhalla_endpoint: valhalla_endpoint.to_string(),
+            valhalla_endpoint: valhalla_endpoint,
         }
     }
 
-    fn get_gtfs_timezone(gtfs: &Gtfs) -> Result<Tz, anyhow::Error> {
-        Ok(gtfs.agencies[0]
-            .timezone
-            .parse()
-            .map_err(|e: String| InMemoryTimetableBuilderError::ParseError(e))?)
-    }
-
-    fn verify_service_offered(gtfs: &Gtfs, calendar: &Calendar) -> Result<bool, anyhow::Error> {
-        let timezone = InMemoryTimetableBuilder::get_gtfs_timezone(gtfs)?;
-        let current_time_local = Utc::now().with_timezone(&timezone);
-        let time_since_start = current_time_local
-            .date_naive()
-            .signed_duration_since(calendar.start_date);
-        let time_until_end = calendar
-            .end_date
-            .signed_duration_since(current_time_local.date_naive());
-        if time_since_start < Duration::zero() || time_until_end < Duration::zero() {
-            Ok(false)
-        } else {
-            Ok(true)
-        }
-    }
-
-    pub async fn preprocess_gtfs(
-        &mut self,
-        gtfs: &Gtfs,
-        estimate_transfers: bool,
-    ) -> Result<(), anyhow::Error> {
-        let gtfs_feed_id = self.next_feed_id;
-        self.next_feed_id += 1;
+    pub async fn preprocess_gtfs(&mut self, gtfs: &Gtfs) -> Result<(), anyhow::Error> {
+        let agency_tz: HashMap<String, Tz> = gtfs
+            .agencies
+            .iter()
+            .map(|agency| {
+                (
+                    agency.id.clone().unwrap_or(String::new()),
+                    agency.timezone.parse().unwrap(),
+                )
+            })
+            .collect();
+        let start_date = Local::now().date_naive().pred_opt().unwrap();
 
         let mut stop_to_stop_id_map = BTreeMap::new();
         for (gtfs_stop_id, _stop) in &gtfs.stops {
-            stop_to_stop_id_map.insert(gtfs_stop_id.clone(), dbg!(stop_to_stop_id_map.len()));
+            stop_to_stop_id_map.insert(gtfs_stop_id.clone(), stop_to_stop_id_map.len());
         }
-        dbg!(stop_to_stop_id_map.len());
 
         let mut route_to_route_id: BTreeMap<Vec<usize>, usize> = BTreeMap::new();
         let mut stop_to_route: BTreeMap<String, Vec<usize>> = BTreeMap::new();
@@ -283,6 +251,8 @@ impl<'a> InMemoryTimetableBuilder {
 
         assert_eq!(route_to_route_id.len(), route_id_to_route_map.len());
 
+        debug!("Done sorting");
+
         {
             let mut total_route_stops = 0usize;
             let mut total_route_trips = 0usize;
@@ -312,39 +282,72 @@ impl<'a> InMemoryTimetableBuilder {
                         .unwrap()
                 });
                 for (_trip_id, gtfs_trip_id) in &trips {
+                    let trip_agency = gtfs.routes[&gtfs.trips[gtfs_trip_id].route_id]
+                        .agency_id
+                        .clone()
+                        .unwrap_or(String::new());
+                    let agency_tz = agency_tz[&trip_agency];
                     let first_trip_stop_time = total_trip_stop_times;
 
-                    for (stop_seq, stop_time) in gtfs
-                        .get_trip(gtfs_trip_id)
-                        .unwrap()
-                        .stop_times
-                        .iter()
-                        .enumerate()
-                    {
-                        self.timetable.trip_stop_times.push(TripStopTime {
-                            trip_index: total_route_trips,
-                            route_stop_seq: stop_seq,
-                            arrival_time: stop_time.arrival_time.unwrap(),
-                            departure_time: stop_time.departure_time.unwrap(),
-                        });
-                        total_trip_stop_times += 1;
-                    }
-                    let trip = Trip {
-                        trip_index: total_route_trips,
-                        route_index: *route_id,
-                        first_trip_stop_time,
-                        last_trip_stop_time: total_trip_stop_times,
-                    };
-                    self.timetable.route_trips.push(trip);
-                    let metadata = TripMetadata {
-                        headsign: gtfs.trips[gtfs_trip_id].clone().trip_headsign,
-                        route_name: gtfs.routes[&gtfs.trips[gtfs_trip_id].route_id]
-                            .short_name
-                            .clone(),
-                    };
-                    self.timetable.trip_metadata_map.insert(trip, metadata);
+                    let trip = gtfs.get_trip(gtfs_trip_id).unwrap();
+                    let trip_days = gtfs.trip_days(&trip.service_id, start_date.clone());
 
-                    total_route_trips += 1;
+                    for day in trip_days {
+                        if day > 3 {
+                            continue;
+                        }
+                        for (stop_seq, stop_time) in trip.stop_times.iter().enumerate() {
+                            let day_start = agency_tz
+                                .from_local_datetime(
+                                    &start_date
+                                        .checked_add_days(Days::new(day as u64))
+                                        .unwrap()
+                                        // GTFS "Time" fields are measured from noon minus 12hrs.
+                                        .and_hms_opt(12, 0, 0)
+                                        .unwrap(),
+                                )
+                                .unwrap()
+                                // GTFS "Time" fields are measured from noon minus 12hr.
+                                .checked_sub_signed(TimeDelta::hours(12))
+                                .unwrap();
+
+                            let arrival_time = day_start
+                                .checked_add_signed(TimeDelta::seconds(
+                                    stop_time.arrival_time.unwrap() as i64,
+                                ))
+                                .unwrap();
+                            let departure_time = day_start
+                                .checked_add_signed(TimeDelta::seconds(
+                                    stop_time.departure_time.unwrap() as i64,
+                                ))
+                                .unwrap();
+                            self.timetable.trip_stop_times.push(TripStopTime::new(
+                                total_route_trips,
+                                stop_seq,
+                                arrival_time,
+                                departure_time,
+                            ));
+                            total_trip_stop_times += 1;
+                        }
+                        let trip = Trip {
+                            trip_index: total_route_trips,
+                            route_index: *route_id,
+                            first_trip_stop_time,
+                            last_trip_stop_time: total_trip_stop_times,
+                        };
+                        self.timetable.route_trips.push(trip);
+                        let metadata = TripMetadata {
+                            headsign: gtfs.trips[gtfs_trip_id].clone().trip_headsign,
+                            route_name: Some(
+                                gtfs.routes[&gtfs.trips[gtfs_trip_id].route_id]
+                                    .short_name
+                                    .clone(),
+                            ),
+                        };
+                        self.timetable.trip_metadata_map.insert(trip, metadata);
+
+                        total_route_trips += 1;
+                    }
                 }
             }
         }
@@ -356,7 +359,6 @@ impl<'a> InMemoryTimetableBuilder {
             for (stop_seq, (stop_id, gtfs_stop_id)) in stop_id_to_stop_map.iter().enumerate() {
                 assert_eq!(stop_seq, *stop_id);
                 assert_eq!(stop_seq, total_stops);
-                drop(stop_seq);
 
                 let gtfs_stop = gtfs.get_stop(&gtfs_stop_id).unwrap();
                 let lat = gtfs_stop.latitude.expect("Unknown location");
@@ -439,18 +441,7 @@ impl<'a> InMemoryTimetableBuilder {
                 .map(
                     |(from_stop, transfer_candidates, client, valhalla_endpoint)| async move {
                         let latlng = from_stop.location();
-                        if estimate_transfers {
-                            transfer_candidates
-                                .iter()
-                                .map(|to_stop| Transfer {
-                                    to: to_stop.id(),
-                                    from: from_stop.id(),
-                                    time: (latlng.distance(&to_stop.location()).rad()
-                                        * EARTH_RADIUS_APPROX)
-                                        as u64, // 1 meter per second.
-                                })
-                                .collect()
-                        } else {
+                        if let Some(valhalla_endpoint) = valhalla_endpoint {
                             let request = MatrixRequest {
                                 sources: vec![ValhallaLocation {
                                     lat: latlng.lat.deg(),
@@ -494,6 +485,17 @@ impl<'a> InMemoryTimetableBuilder {
                                 });
                             }
                             line_items
+                        } else {
+                            transfer_candidates
+                                .iter()
+                                .map(|to_stop| Transfer {
+                                    to: to_stop.id(),
+                                    from: from_stop.id(),
+                                    time: (latlng.distance(&to_stop.location()).rad()
+                                        * EARTH_RADIUS_APPROX)
+                                        as u64, // 1 meter per second.
+                                })
+                                .collect()
                         }
                     },
                 )

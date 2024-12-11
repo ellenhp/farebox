@@ -11,6 +11,7 @@ use std::{
 
 use anyhow::Ok;
 use bytemuck::checked::cast_slice;
+use log::debug;
 use memmap2::{Mmap, MmapOptions};
 use rstar::RTree;
 
@@ -197,25 +198,38 @@ impl<'a> MmapTimetable<'a> {
     }
 
     pub fn new(base_path: PathBuf) -> Result<MmapTimetable<'a>, anyhow::Error> {
+        debug!("Creating a new memory-mapped timetable. Opening files");
+        debug!("Opening routes.");
         let routes = File::open(base_path.join("routes"))?;
+        debug!("Opening route stops.");
         let route_stops = File::open(base_path.join("route_stops"))?;
+        debug!("Opening route trips.");
         let route_trips = File::open(base_path.join("route_trips"))?;
+        debug!("Opening stops.");
         let stops = File::open(base_path.join("stops"))?;
+        debug!("Opening stop routes.");
         let stop_routes = File::open(base_path.join("stop_routes"))?;
+        debug!("Opening stop times.");
         let trip_stop_times = File::open(base_path.join("trip_stop_times"))?;
+        debug!("Opening transfer index.");
         let transfer_index = File::open(base_path.join("transfer_index"))?;
+        debug!("Opening transfers.");
         let transfers = File::open(base_path.join("transfers"))?;
 
-        let stop_metadata = File::open(base_path.join("stop_metadata"))?;
+        debug!("Opening stop metadata.");
+        let stop_metadata = File::open(base_path.join("stop_metadata")).unwrap();
         let stop_metadata: HashMap<Stop, gtfs_structures::Stop> =
             rmp_serde::from_read(&stop_metadata)?;
 
+        debug!("Opening trip metadata.");
         let trip_metadata = File::open(base_path.join("trip_metadata"))?;
         let trip_metadata: HashMap<Trip, TripMetadata> = rmp_serde::from_read(&trip_metadata)?;
 
+        debug!("Opening rtree.");
         let rtree = File::open(base_path.join("rtree"))?;
         let rtree: RTree<IndexedStop> = rmp_serde::from_read(&rtree)?;
 
+        debug!("mmapping");
         let backing_routes = unsafe { MmapOptions::new().map(&routes)? };
         let backing_route_stops = unsafe { MmapOptions::new().map(&route_stops)? };
         let backing_route_trips = unsafe { MmapOptions::new().map(&route_trips)? };
