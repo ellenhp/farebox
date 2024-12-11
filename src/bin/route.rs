@@ -26,8 +26,10 @@ async fn main() -> Result<(), anyhow::Error> {
         MmapTimetable::new(args.base_path.into())?,
         args.valhalla_endpoint,
     );
-    let start_location = LatLng::from_degrees(47.6501965, -122.3521259);
-    let target_location = LatLng::from_degrees(47.9793973, -122.1973826);
+    let start_location = LatLng::from_degrees(47.4227246, -122.3004649);
+    let target_location = LatLng::from_degrees(45.4941787, -122.8094819);
+    // Angle lake: 47.4227246, -122.3004649
+    // Cap Hill: 47.6227686, -122.3250899
     // Fremont: 47.6501965, -122.3521259
     // Oly: 47.0242819, -122.8989958
     // Lynnwood: 47.8161226, -122.2970119

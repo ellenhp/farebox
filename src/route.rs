@@ -3,6 +3,7 @@ use std::{cell::RefCell, collections::HashMap, marker::PhantomData, time::Instan
 use log::debug;
 use reqwest::Client;
 use s2::latlng::LatLng;
+use serde::Serialize;
 
 use crate::{
     raptor::timetable::TripStopTime,
@@ -66,7 +67,7 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
         max_candidate_stops_each_side: Option<usize>,
         max_transfers: Option<usize>,
         max_transfer_delta: Option<usize>,
-    ) -> Vec<(Step, usize)> {
+    ) -> Option<Vec<(Step, usize)>> {
         let start_stops = self.nearest_stops(
             start_location,
             max_candidate_stops_each_side,
@@ -157,7 +158,7 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
         }
 
         // TODO: Redo all of this once `seconds_since_service_day_start` is private.
-        let (best_itinerary, last_leg_cost) = target_costs
+        let (best_itinerary, last_leg_cost) = if let Some(itinerary) = target_costs
             .iter()
             .filter_map(|(target_id, cost)| {
                 context.best_times_global[*target_id]
@@ -165,7 +166,11 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
                     .map(|it| (it, *cost))
             })
             .min_by_key(|(it, cost)| it.final_time.epoch_seconds() + cost)
-            .unwrap();
+        {
+            itinerary
+        } else {
+            return None;
+        };
 
         let mut steps = vec![];
         let mut step_cursor = best_itinerary.last_step;
@@ -245,7 +250,7 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
             ));
             step_cursor = step.previous_step;
         }
-        steps
+        Some(steps)
     }
 }
 
@@ -266,7 +271,7 @@ struct InternalItinerary {
     final_time: Time,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct BeginStep {
     pub begin_latlng: [f64; 2],
     pub begin_epoch_seconds: u64,
@@ -275,7 +280,7 @@ pub struct BeginStep {
     pub first_stop_arrival_epoch_seconds: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct TripStep {
     pub on_route: Option<String>,
     pub agency: Option<String>,
@@ -288,7 +293,7 @@ pub struct TripStep {
     pub shape: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct TransferStep {
     pub from_stop: Option<String>,
     pub from_stop_latlng: [f64; 2],
@@ -298,7 +303,7 @@ pub struct TransferStep {
     pub arrival_epoch_seconds: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct EndStep {
     pub last_stop: Option<String>,
     pub last_stop_latlng: [f64; 2],
@@ -307,7 +312,7 @@ pub struct EndStep {
     pub end_epoch_seconds: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum Step {
     Begin(BeginStep),
     Trip(TripStep),

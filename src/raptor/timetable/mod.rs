@@ -1,7 +1,7 @@
 pub mod in_memory;
 pub mod mmap;
 
-use std::{collections::HashMap, u32};
+use std::{collections::HashMap, time::UNIX_EPOCH, u32};
 
 use bytemuck::{Pod, Zeroable};
 use chrono::{DateTime, Days, NaiveDate, NaiveDateTime, NaiveTime};
@@ -319,6 +319,12 @@ impl Time {
 
     pub fn epoch() -> Time {
         Time { epoch_seconds: 0 }
+    }
+
+    pub fn now() -> Time {
+        Time {
+            epoch_seconds: UNIX_EPOCH.elapsed().unwrap().as_secs() as u32,
+        }
     }
 }
 
