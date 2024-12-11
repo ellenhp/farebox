@@ -1,9 +1,12 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::{
+    collections::{BTreeMap, BTreeSet, HashMap},
+    sync::{Arc, Mutex},
+};
 
 use chrono::{Days, Local, TimeDelta, TimeZone};
 use chrono_tz::Tz;
 use gtfs_structures::Gtfs;
-use log::{debug, info, warn};
+use log::{debug, warn};
 use reqwest::Client;
 use rstar::RTree;
 use s2::{cellid::CellID, latlng::LatLng};
@@ -29,7 +32,7 @@ pub struct InMemoryTimetable {
     trip_stop_times: Vec<TripStopTime>,
     transfer_index: Vec<usize>,
     transfers: Vec<Transfer>,
-    rtree: RTree<IndexedStop>,
+    rtree: Arc<Mutex<RTree<IndexedStop>>>,
     trip_metadata_map: HashMap<Trip, TripMetadata>,
     stop_metadata_map: HashMap<Stop, gtfs_structures::Stop>,
 }
@@ -95,17 +98,26 @@ impl<'a> Timetable<'a> for InMemoryTimetable {
         &self.transfer_index
     }
 
-    #[inline]
-    fn stop_index(&'a self) -> &'a RTree<IndexedStop> {
-        &self.rtree
-    }
-
     fn stop_metadata(&'a self) -> &'a HashMap<Stop, gtfs_structures::Stop> {
         &self.stop_metadata_map
     }
 
     fn trip_metadata(&'a self) -> &'a HashMap<Trip, TripMetadata> {
         &self.trip_metadata_map
+    }
+
+    fn stop_index_copy(&'a self) -> RTree<IndexedStop> {
+        self.rtree.lock().unwrap().clone()
+    }
+
+    fn nearest_stops(&'a self, lat: f64, lng: f64, n: usize) -> Vec<(&'a Stop, f64)> {
+        self.rtree
+            .lock()
+            .unwrap()
+            .nearest_neighbor_iter_with_distance_2(&lat_lng_to_cartesian(lat, lng))
+            .take(n)
+            .map(|(stop, dist_sq)| (self.stop(stop.id), dist_sq.sqrt()))
+            .collect()
     }
 }
 
@@ -120,7 +132,7 @@ impl<'a> InMemoryTimetable {
             trip_stop_times: vec![],
             transfer_index: vec![],
             transfers: vec![],
-            rtree: RTree::new(),
+            rtree: Arc::new(Mutex::new(RTree::new())),
             trip_metadata_map: HashMap::new(),
             stop_metadata_map: HashMap::new(),
         }
@@ -412,7 +424,7 @@ impl<'a> InMemoryTimetableBuilder {
                     total_stop_routes += 1;
                 }
                 let location_cartesian = lat_lng_to_cartesian(lat, lng);
-                self.timetable.rtree.insert(IndexedStop {
+                self.timetable.rtree.lock().unwrap().insert(IndexedStop {
                     coords: location_cartesian,
                     id: *stop_id,
                 });
@@ -421,7 +433,6 @@ impl<'a> InMemoryTimetableBuilder {
         }
 
         let client = Client::new();
-        let rtree = self.timetable.rtree.clone();
 
         debug!("Calculating transfer times");
         let transfers = {
@@ -432,7 +443,11 @@ impl<'a> InMemoryTimetableBuilder {
                 .map(|from_stop| {
                     let latlng = from_stop.location();
                     let mut transfer_candidates = vec![];
-                    for (count, (to_stop, dist_sq)) in rtree
+                    for (count, (to_stop, dist_sq)) in self
+                        .timetable
+                        .rtree
+                        .lock()
+                        .unwrap()
                         .nearest_neighbor_iter_with_distance_2(&lat_lng_to_cartesian(
                             latlng.lat.deg(),
                             latlng.lng.deg(),

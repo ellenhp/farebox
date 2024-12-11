@@ -29,7 +29,8 @@ pub trait Timetable<'a> {
     fn transfers(&'a self) -> &'a [Transfer];
     fn transfer_index(&'a self) -> &'a [usize];
     fn transfers_from(&'a self, stop_id: usize) -> &'a [Transfer];
-    fn stop_index(&'a self) -> &'a RTree<IndexedStop>;
+    fn stop_index_copy(&'a self) -> RTree<IndexedStop>;
+    fn nearest_stops(&'a self, lat: f64, lng: f64, n: usize) -> Vec<(&'a Stop, f64)>;
 
     fn stop_metadata(&'a self) -> &'a HashMap<Stop, gtfs_structures::Stop>;
     fn trip_metadata(&'a self) -> &'a HashMap<Trip, TripMetadata>;

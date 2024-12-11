@@ -9,7 +9,6 @@ use crate::{
     valhalla::{matrix_request, MatrixRequest, ValhallaLocation},
 };
 
-use crate::raptor::geomath::lat_lng_to_cartesian;
 use crate::raptor::timetable::{Route, RouteStop, Stop, Time, Timetable, Trip};
 
 pub struct Router<'a, T: Timetable<'a>> {
@@ -39,11 +38,8 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
         assert!(max_stops.is_some() || max_distance.is_some());
         for (count, (stop, dist_sq)) in self
             .timetable
-            .stop_index()
-            .nearest_neighbor_iter_with_distance_2(&lat_lng_to_cartesian(
-                location.lat.deg(),
-                location.lng.deg(),
-            ))
+            .nearest_stops(location.lat.deg(), location.lng.deg(), 100)
+            .iter()
             .enumerate()
         {
             if let Some(max_stops) = max_stops {
@@ -52,11 +48,11 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
                 }
             }
             if let Some(max_distance) = max_distance {
-                if dist_sq > max_distance * max_distance {
+                if *dist_sq > max_distance {
                     break;
                 }
             }
-            stops.push(self.timetable.stop(stop.id));
+            stops.push(self.timetable.stop(stop.id()));
         }
         stops
     }

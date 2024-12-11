@@ -15,7 +15,7 @@ use log::debug;
 use memmap2::{Mmap, MmapOptions};
 use rstar::RTree;
 
-use crate::raptor::geomath::IndexedStop;
+use crate::raptor::geomath::{lat_lng_to_cartesian, IndexedStop};
 
 use super::{
     in_memory::InMemoryTimetable, Route, RouteStop, Stop, StopRoute, Timetable, Transfer, Trip,
@@ -111,8 +111,16 @@ impl<'a> Timetable<'a> for MmapTimetable<'a> {
     }
 
     #[inline]
-    fn stop_index(&'a self) -> &'a RTree<IndexedStop> {
-        &self.rtree
+    fn stop_index_copy(&'a self) -> RTree<IndexedStop> {
+        self.rtree.clone()
+    }
+
+    fn nearest_stops(&'a self, lat: f64, lng: f64, n: usize) -> Vec<(&'a Stop, f64)> {
+        self.rtree
+            .nearest_neighbor_iter_with_distance_2(&lat_lng_to_cartesian(lat, lng))
+            .take(n)
+            .map(|(stop, dist_sq)| (self.stop(stop.id), dist_sq.sqrt()))
+            .collect()
     }
 
     fn stop_metadata(&'a self) -> &'a HashMap<Stop, gtfs_structures::Stop> {
@@ -352,7 +360,7 @@ impl<'a> MmapTimetable<'a> {
 
             {
                 let mut rtree = File::create(base_path.join("rtree"))?;
-                rtree.write_all(&rmp_serde::to_vec(in_memory_timetable.stop_index())?)?;
+                rtree.write_all(&rmp_serde::to_vec(&in_memory_timetable.stop_index_copy())?)?;
             }
             {
                 let mut stop_metadata = File::create(base_path.join("stop_metadata"))?;
