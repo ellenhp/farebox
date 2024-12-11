@@ -170,7 +170,6 @@ pub struct InMemoryTimetableBuilder {
     next_route_id: usize,
     next_route_trip_id: usize,
     next_route_stop_id: usize,
-    next_trip_id: usize,
     next_trip_stop_time_id: usize,
     timetable: InMemoryTimetable,
     valhalla_endpoint: Option<String>,
@@ -187,7 +186,6 @@ impl<'a> InMemoryTimetableBuilder {
             next_route_id: 0,
             next_route_trip_id: 0,
             next_route_stop_id: 0,
-            next_trip_id: 0,
             next_trip_stop_time_id: 0,
             timetable,
             valhalla_endpoint: valhalla_endpoint,
@@ -210,7 +208,7 @@ impl<'a> InMemoryTimetableBuilder {
 
         let mut route_to_route_id: BTreeMap<Vec<usize>, usize> = BTreeMap::new();
         let mut stop_to_route: BTreeMap<String, Vec<usize>> = BTreeMap::new();
-        let mut route_id_to_trip_list: BTreeMap<usize, Vec<(usize, String)>> = BTreeMap::new();
+        let mut route_id_to_trip_list: BTreeMap<usize, Vec<(u16, String)>> = BTreeMap::new();
         let mut stop_id_to_route_list: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
         for (gtfs_trip_id, trip) in &gtfs.trips {
             let trip_stops: Vec<usize> = trip
@@ -236,13 +234,16 @@ impl<'a> InMemoryTimetableBuilder {
                 }
             }
 
-            let this_trip_id = self.next_trip_id;
-            self.next_trip_id += 1;
+            let trip_days = gtfs.trip_days(&trip.service_id, start_date.clone());
 
-            if let Some(trip_list) = route_id_to_trip_list.get_mut(&route_id) {
-                trip_list.push((this_trip_id, gtfs_trip_id.clone()));
-            } else {
-                route_id_to_trip_list.insert(route_id, vec![(this_trip_id, gtfs_trip_id.clone())]);
+            route_id_to_trip_list.insert(route_id, vec![]);
+            for day in trip_days {
+                if day <= 7 {
+                    route_id_to_trip_list
+                        .get_mut(&route_id)
+                        .unwrap()
+                        .push((day, gtfs_trip_id.clone()));
+                }
             }
 
             for stop_time in &trip.stop_times {
@@ -291,16 +292,18 @@ impl<'a> InMemoryTimetableBuilder {
                 }
                 let trips_pre_sort = route_id_to_trip_list.get(&route_id).unwrap().clone();
                 let mut trips = trips_pre_sort.clone();
-                trips.sort_by_cached_key(|(_trip_seq, gtfs_trip_id)| {
+                trips.sort_by_cached_key(|(day, gtfs_trip_id)| {
                     gtfs.get_trip(gtfs_trip_id)
                         .unwrap()
                         .stop_times
                         .iter()
                         .filter_map(|stop_time| stop_time.departure_time)
                         .next()
-                        .unwrap_or(0)
+                        .unwrap_or(u32::MAX)
+                        // TODO: This is a DST bug.
+                        .saturating_add(*day as u32 * 3600 * 24)
                 });
-                for (_trip_id, gtfs_trip_id) in &trips {
+                for (day, gtfs_trip_id) in &trips {
                     let trip_agency_id = gtfs.routes[&gtfs.trips[gtfs_trip_id].route_id]
                         .agency_id
                         .clone()
@@ -319,66 +322,60 @@ impl<'a> InMemoryTimetableBuilder {
                     let first_trip_stop_time = self.next_trip_stop_time_id;
 
                     let trip = gtfs.get_trip(gtfs_trip_id).unwrap();
-                    let trip_days = gtfs.trip_days(&trip.service_id, start_date.clone());
 
-                    for day in trip_days {
-                        if day > 3 {
-                            continue;
-                        }
-                        for (stop_seq, stop_time) in trip.stop_times.iter().enumerate() {
-                            let day_start = agency_tz
-                                .from_local_datetime(
-                                    &start_date
-                                        .checked_add_days(Days::new(day as u64))
-                                        .unwrap()
-                                        // GTFS "Time" fields are measured from noon minus 12hrs.
-                                        .and_hms_opt(12, 0, 0)
-                                        .unwrap(),
-                                )
-                                .unwrap()
-                                // GTFS "Time" fields are measured from noon minus 12hr.
-                                .checked_sub_signed(TimeDelta::hours(12))
-                                .unwrap();
+                    for (stop_seq, stop_time) in trip.stop_times.iter().enumerate() {
+                        let day_start = agency_tz
+                            .from_local_datetime(
+                                &start_date
+                                    .checked_add_days(Days::new(*day as u64))
+                                    .unwrap()
+                                    // GTFS "Time" fields are measured from noon minus 12hrs.
+                                    .and_hms_opt(12, 0, 0)
+                                    .unwrap(),
+                            )
+                            .unwrap()
+                            // GTFS "Time" fields are measured from noon minus 12hr.
+                            .checked_sub_signed(TimeDelta::hours(12))
+                            .unwrap();
 
-                            let arrival_time = day_start
-                                .checked_add_signed(TimeDelta::seconds(
-                                    stop_time.arrival_time.unwrap_or(u32::MAX) as i64,
-                                ))
-                                .unwrap();
-                            let departure_time = day_start
-                                .checked_add_signed(TimeDelta::seconds(
-                                    stop_time.departure_time.unwrap_or(u32::MAX) as i64,
-                                ))
-                                .unwrap();
-                            self.timetable.trip_stop_times.push(TripStopTime::new(
-                                self.next_route_trip_id,
-                                stop_seq,
-                                arrival_time,
-                                departure_time,
-                            ));
-                            self.next_trip_stop_time_id += 1;
-                        }
-                        let trip = Trip {
-                            trip_index: self.next_route_trip_id,
-                            route_index: *route_id,
-                            first_trip_stop_time,
-                            last_trip_stop_time: self.next_trip_stop_time_id,
-                        };
-                        self.timetable.route_trips.push(trip);
-                        let agency_name = trip_agency.name.clone();
-                        let metadata = TripMetadata {
-                            agency_name: Some(agency_name),
-                            headsign: gtfs.trips[gtfs_trip_id].clone().trip_headsign,
-                            route_name: Some(
-                                gtfs.routes[&gtfs.trips[gtfs_trip_id].route_id]
-                                    .short_name
-                                    .clone(),
-                            ),
-                        };
-                        self.timetable.trip_metadata_map.insert(trip, metadata);
-
-                        self.next_route_trip_id += 1;
+                        let arrival_time = day_start
+                            .checked_add_signed(TimeDelta::seconds(
+                                stop_time.arrival_time.unwrap_or(u32::MAX) as i64,
+                            ))
+                            .unwrap();
+                        let departure_time = day_start
+                            .checked_add_signed(TimeDelta::seconds(
+                                stop_time.departure_time.unwrap_or(u32::MAX) as i64,
+                            ))
+                            .unwrap();
+                        self.timetable.trip_stop_times.push(TripStopTime::new(
+                            self.next_route_trip_id,
+                            stop_seq,
+                            arrival_time,
+                            departure_time,
+                        ));
+                        self.next_trip_stop_time_id += 1;
                     }
+                    let trip = Trip {
+                        trip_index: self.next_route_trip_id,
+                        route_index: *route_id,
+                        first_trip_stop_time,
+                        last_trip_stop_time: self.next_trip_stop_time_id,
+                    };
+                    self.timetable.route_trips.push(trip);
+                    let agency_name = trip_agency.name.clone();
+                    let metadata = TripMetadata {
+                        agency_name: Some(agency_name),
+                        headsign: gtfs.trips[gtfs_trip_id].clone().trip_headsign,
+                        route_name: Some(
+                            gtfs.routes[&gtfs.trips[gtfs_trip_id].route_id]
+                                .short_name
+                                .clone(),
+                        ),
+                    };
+                    self.timetable.trip_metadata_map.insert(trip, metadata);
+
+                    self.next_route_trip_id += 1;
                 }
             }
         }

@@ -654,7 +654,6 @@ where
                     // We don't actually need to handle the case where the departure hasn't been added because of the u32::MAX step at the beginning of do_round.
                     if trip_stop_time.departure() < marked_routes[route.id()].departure() {
                         marked_routes[route.id()] = *trip_stop_time;
-                        println!("{:?}", self.timetable.trip_metadata()[trip]);
                         // Any trips after this one do not need to be examined.
                         break;
                     }
