@@ -31,7 +31,7 @@ fn parse_lat_lng(text: &str) -> Option<LatLng> {
     } else {
         return None;
     };
-    let lng = if let Ok(lng) = parts[0].parse() {
+    let lng = if let Ok(lng) = parts[1].parse() {
         lng
     } else {
         return None;
