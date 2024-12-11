@@ -134,6 +134,7 @@ impl<'a> Trip {
 pub struct TripMetadata {
     pub headsign: Option<String>,
     pub route_name: Option<String>,
+    pub agency_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Copy, Pod, Zeroable)]

@@ -223,6 +223,12 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
                             .metadata(&self.timetable)
                             .route_name
                             .clone(),
+                        agency: step
+                            .trip
+                            .unwrap()
+                            .metadata(&self.timetable)
+                            .agency_name
+                            .clone(),
                         departure_stop: Some(from.metadata(&self.timetable).name.clone()),
                         departure_stop_latlng: [from_location.lat.deg(), from_location.lng.deg()],
                         departure_epoch_seconds: step.departure.epoch_seconds() as u64,
@@ -269,6 +275,7 @@ pub struct BeginStep {
 #[derive(Debug, Clone)]
 pub struct TripStep {
     pub on_route: Option<String>,
+    pub agency: Option<String>,
     pub departure_stop: Option<String>,
     pub departure_stop_latlng: [f64; 2],
     pub departure_epoch_seconds: u64,

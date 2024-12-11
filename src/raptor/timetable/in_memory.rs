@@ -171,15 +171,10 @@ impl<'a> InMemoryTimetableBuilder {
     }
 
     pub async fn preprocess_gtfs(&mut self, gtfs: &Gtfs) -> Result<(), anyhow::Error> {
-        let agency_tz: HashMap<String, Tz> = gtfs
+        let agencies: HashMap<String, _> = gtfs
             .agencies
             .iter()
-            .map(|agency| {
-                (
-                    agency.id.clone().unwrap_or(String::new()),
-                    agency.timezone.parse().unwrap(),
-                )
-            })
+            .map(|agency| (agency.id.clone().unwrap_or(String::new()), agency))
             .collect();
         let start_date = Local::now().date_naive().pred_opt().unwrap();
 
@@ -277,16 +272,29 @@ impl<'a> InMemoryTimetableBuilder {
                 let trips_pre_sort = route_id_to_trip_list.get(&route_id).unwrap().clone();
                 let mut trips = trips_pre_sort.clone();
                 trips.sort_by_cached_key(|(_trip_seq, gtfs_trip_id)| {
-                    gtfs.get_trip(gtfs_trip_id).unwrap().stop_times[0]
-                        .departure_time
+                    gtfs.get_trip(gtfs_trip_id)
                         .unwrap()
+                        .stop_times
+                        .iter()
+                        .filter_map(|stop_time| stop_time.departure_time)
+                        .next()
+                        .unwrap_or(0)
                 });
                 for (_trip_id, gtfs_trip_id) in &trips {
-                    let trip_agency = gtfs.routes[&gtfs.trips[gtfs_trip_id].route_id]
+                    let trip_agency_id = gtfs.routes[&gtfs.trips[gtfs_trip_id].route_id]
                         .agency_id
                         .clone()
                         .unwrap_or(String::new());
-                    let agency_tz = agency_tz[&trip_agency];
+                    let agency_tz: Tz = if let Some(agency) = agencies.get(&trip_agency_id) {
+                        agency.timezone.parse().unwrap()
+                    } else {
+                        if agencies.len() == 1 {
+                            agencies.values().next().unwrap().timezone.parse().unwrap()
+                        } else {
+                            warn!("No matching agency: {}, {:?}", trip_agency_id, agencies);
+                            continue;
+                        }
+                    };
                     let first_trip_stop_time = total_trip_stop_times;
 
                     let trip = gtfs.get_trip(gtfs_trip_id).unwrap();
@@ -311,16 +319,22 @@ impl<'a> InMemoryTimetableBuilder {
                                 .checked_sub_signed(TimeDelta::hours(12))
                                 .unwrap();
 
-                            let arrival_time = day_start
-                                .checked_add_signed(TimeDelta::seconds(
-                                    stop_time.arrival_time.unwrap() as i64,
-                                ))
-                                .unwrap();
-                            let departure_time = day_start
-                                .checked_add_signed(TimeDelta::seconds(
-                                    stop_time.departure_time.unwrap() as i64,
-                                ))
-                                .unwrap();
+                            let arrival_time = if let Some(arrival_time) = stop_time.arrival_time {
+                                day_start
+                                    .checked_add_signed(TimeDelta::seconds(arrival_time as i64))
+                                    .unwrap()
+                            } else {
+                                continue;
+                            };
+                            let departure_time = if let Some(departure_time) =
+                                stop_time.departure_time
+                            {
+                                day_start
+                                    .checked_add_signed(TimeDelta::seconds(departure_time as i64))
+                                    .unwrap()
+                            } else {
+                                continue;
+                            };
                             self.timetable.trip_stop_times.push(TripStopTime::new(
                                 total_route_trips,
                                 stop_seq,
@@ -336,7 +350,9 @@ impl<'a> InMemoryTimetableBuilder {
                             last_trip_stop_time: total_trip_stop_times,
                         };
                         self.timetable.route_trips.push(trip);
+                        let agency_name = agencies[&trip_agency_id].name.clone();
                         let metadata = TripMetadata {
+                            agency_name: Some(agency_name),
                             headsign: gtfs.trips[gtfs_trip_id].clone().trip_headsign,
                             route_name: Some(
                                 gtfs.routes[&gtfs.trips[gtfs_trip_id].route_id]
@@ -406,7 +422,7 @@ impl<'a> InMemoryTimetableBuilder {
         let client = Client::new();
         let rtree = self.timetable.rtree.clone();
 
-        info!("Calculating transfer times");
+        debug!("Calculating transfer times");
         let transfers = {
             let transfers: Vec<_> = self
                 .timetable
