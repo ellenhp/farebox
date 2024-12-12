@@ -6,7 +6,10 @@ use s2::latlng::LatLng;
 use serde::Serialize;
 
 use crate::{
-    raptor::timetable::TripStopTime,
+    raptor::{
+        geomath::{EARTH_RADIUS_APPROX, FAKE_WALK_SPEED_SECONDS_PER_METER},
+        timetable::TripStopTime,
+    },
     valhalla::{matrix_request, MatrixRequest, ValhallaLocation},
 };
 
@@ -120,7 +123,17 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
                     })
                     .collect()
             } else {
-                target_stops.iter().map(|stop| (stop.id(), 0)).collect()
+                target_stops
+                    .iter()
+                    .map(|stop| {
+                        (
+                            stop.id(),
+                            (FAKE_WALK_SPEED_SECONDS_PER_METER
+                                * stop.location().distance(&target_location).rad()
+                                * EARTH_RADIUS_APPROX) as u32,
+                        )
+                    })
+                    .collect()
             };
 
         let mut context = RouterContext {
@@ -465,7 +478,14 @@ where
                 starts
                     .iter()
                     .enumerate()
-                    .map(|(i, _start)| (i, 0))
+                    .map(|(i, start)| {
+                        (
+                            i,
+                            (FAKE_WALK_SPEED_SECONDS_PER_METER
+                                * start.location().distance(&start_location).rad()
+                                * EARTH_RADIUS_APPROX) as u32,
+                        )
+                    })
                     .collect()
             };
         for (stop_option_index, stop) in starts.iter().enumerate() {
@@ -606,9 +626,9 @@ where
                     .last_step
                     .clone();
                 // Don't transfer twice in a row.
-                if self.step_log[last_step].route.is_none() {
-                    continue;
-                }
+                // if self.step_log[last_step].route.is_none() {
+                //     continue;
+                // }
                 let best_arrival_at_transfer_start = self.best_times_global[stop.id()]
                     .as_ref()
                     .unwrap()
