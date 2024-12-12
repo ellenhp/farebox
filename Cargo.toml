@@ -13,7 +13,7 @@ clap = { version = "4.3.0", features = ["derive"] }
 env_logger = "0.10.0"
 gtfs-structures = "0.34.0"
 log = "0.4.17"
-rayon = "1.7.0"
+rayon = "1.10.0"
 reqwest = "0.11.18"
 rstar = { version = "0.11.0", features = ["serde"] }
 s2 = "0.0.12"

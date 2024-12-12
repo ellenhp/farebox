@@ -1,7 +1,8 @@
-use std::fs;
+use std::{fs, path::PathBuf};
 
 use clap::Parser;
 use farebox::raptor::timetable::{in_memory::InMemoryTimetable, mmap::MmapTimetable};
+use rayon::iter::{IntoParallelRefIterator, ParallelBridge, ParallelIterator};
 
 extern crate farebox;
 
@@ -20,15 +21,18 @@ async fn main() {
     env_logger::init();
     let args = BuildArgs::parse();
     if fs::metadata(&args.gtfs_path).unwrap().is_dir() {
-        let paths = fs::read_dir(&args.gtfs_path).unwrap();
+        let paths: Vec<PathBuf> = fs::read_dir(&args.gtfs_path)
+            .unwrap()
+            .map(|p| p.unwrap().path())
+            .collect();
 
         let timetables: Vec<gtfs_structures::Gtfs> = paths
+            .par_iter()
             .filter_map(|path| {
-                let path = path.unwrap();
-                if let Ok(feed) = gtfs_structures::Gtfs::from_path(&path.path().to_str().unwrap()) {
+                if let Ok(feed) = gtfs_structures::Gtfs::from_path(&path.to_str().unwrap()) {
                     Some(feed)
                 } else {
-                    println!("Failed to load feed: {:?}", path.path());
+                    println!("Failed to load feed: {:?}", path);
                     None
                 }
             })
