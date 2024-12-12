@@ -176,7 +176,7 @@ pub struct InMemoryTimetableBuilder {
 }
 
 impl<'a> InMemoryTimetableBuilder {
-    fn new(
+    pub fn new(
         timetable: InMemoryTimetable,
         valhalla_endpoint: Option<String>,
     ) -> InMemoryTimetableBuilder {
@@ -427,7 +427,7 @@ impl<'a> InMemoryTimetableBuilder {
         Result::Ok(())
     }
 
-    async fn calculate_transfers(&mut self) {
+    pub async fn calculate_transfers(&mut self) {
         assert_eq!(
             self.timetable.stops.len(),
             self.timetable.rtree.lock().unwrap().size()
@@ -548,7 +548,7 @@ impl<'a> InMemoryTimetableBuilder {
         }
     }
 
-    fn to_timetable(self) -> InMemoryTimetable {
+    pub fn to_timetable(self) -> InMemoryTimetable {
         self.timetable.clone()
     }
 }
