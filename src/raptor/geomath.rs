@@ -29,6 +29,9 @@ impl PointDistance for IndexedStop {
 }
 
 pub fn lat_lng_to_cartesian(lat: f64, lng: f64) -> [f64; 3] {
+    if !lat.is_finite() || !lng.is_finite() {
+        return [0.0; 3];
+    }
     let lat = lat.to_radians();
     let lng = lng.to_radians();
     [

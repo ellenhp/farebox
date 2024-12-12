@@ -2,7 +2,7 @@ use std::{fs, path::PathBuf};
 
 use clap::Parser;
 use farebox::raptor::timetable::{in_memory::InMemoryTimetable, mmap::MmapTimetable};
-use rayon::iter::{IntoParallelRefIterator, ParallelBridge, ParallelIterator};
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
 extern crate farebox;
 
@@ -29,7 +29,11 @@ async fn main() {
         let timetables: Vec<gtfs_structures::Gtfs> = paths
             .par_iter()
             .filter_map(|path| {
-                if let Ok(feed) = gtfs_structures::Gtfs::from_path(&path.to_str().unwrap()) {
+                let path = path.to_str().unwrap();
+                if path.ends_with(".json") {
+                    return None;
+                }
+                if let Ok(feed) = gtfs_structures::Gtfs::from_path(path) {
                     Some(feed)
                 } else {
                     println!("Failed to load feed: {:?}", path);

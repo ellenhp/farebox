@@ -15,7 +15,7 @@ gtfs-structures = "0.34.0"
 log = "0.4.17"
 rayon = "1.10.0"
 reqwest = "0.11.18"
-rstar = { version = "0.11.0", features = ["serde"] }
+rstar = { version = "0.12.2", features = ["serde"] }
 s2 = "0.0.12"
 thiserror = "1.0.40"
 tokio = { version = "1", features = ["full"] }
