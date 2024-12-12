@@ -457,8 +457,7 @@ impl<'a> InMemoryTimetableBuilder {
                         let dist = dist_sq.sqrt();
                         if dist > 5000f64 {
                             break;
-                        }
-                        if count > 50 {
+                        } else if dist > 3000f64 && count > 50 {
                             break;
                         }
                         transfer_candidates.push(self.timetable.stop(to_stop.id));
