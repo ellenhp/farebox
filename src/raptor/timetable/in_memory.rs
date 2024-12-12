@@ -14,7 +14,10 @@ use s2::{cellid::CellID, latlng::LatLng};
 
 use crate::{
     raptor::{
-        geomath::{lat_lng_to_cartesian, IndexedStop, EARTH_RADIUS_APPROX},
+        geomath::{
+            lat_lng_to_cartesian, IndexedStop, EARTH_RADIUS_APPROX,
+            FAKE_WALK_SPEED_SECONDS_PER_METER,
+        },
         timetable::{Route, RouteStop, Stop, StopRoute, Transfer, Trip, TripStopTime},
     },
     valhalla::{matrix_request, MatrixRequest, ValhallaLocation},
@@ -522,7 +525,7 @@ impl<'a> InMemoryTimetableBuilder {
                                 .map(|to_stop| Transfer {
                                     to: to_stop.id(),
                                     from: from_stop.id(),
-                                    time: (2.0
+                                    time: (FAKE_WALK_SPEED_SECONDS_PER_METER
                                         * latlng.distance(&to_stop.location()).rad()
                                         * EARTH_RADIUS_APPROX)
                                         as u64, // 1 meter per second.
