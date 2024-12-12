@@ -6,7 +6,7 @@ use s2::latlng::LatLng;
 use serde::Serialize;
 
 use crate::{
-    raptor::timetable::TripStopTime,
+    raptor::{geomath::EARTH_RADIUS_APPROX, timetable::TripStopTime},
     valhalla::{matrix_request, MatrixRequest, ValhallaLocation},
 };
 
@@ -120,7 +120,16 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
                     })
                     .collect()
             } else {
-                target_stops.iter().map(|stop| (stop.id(), 0)).collect()
+                target_stops
+                    .iter()
+                    .map(|stop| {
+                        (
+                            stop.id(),
+                            (stop.location().distance(&target_location).rad() * EARTH_RADIUS_APPROX)
+                                as u32,
+                        )
+                    })
+                    .collect()
             };
 
         let mut context = RouterContext {
@@ -465,7 +474,13 @@ where
                 starts
                     .iter()
                     .enumerate()
-                    .map(|(i, _start)| (i, 0))
+                    .map(|(i, start)| {
+                        (
+                            i,
+                            (start.location().distance(&start_location).rad() * EARTH_RADIUS_APPROX)
+                                as u32,
+                        )
+                    })
                     .collect()
             };
         for (stop_option_index, stop) in starts.iter().enumerate() {
