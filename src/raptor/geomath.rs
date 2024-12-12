@@ -2,6 +2,7 @@ use rstar::{PointDistance, RTreeObject, AABB};
 use serde::{Deserialize, Serialize};
 
 pub static EARTH_RADIUS_APPROX: f64 = 6_371_000f64;
+pub static FAKE_WALK_SPEED_SECONDS_PER_METER: f64 = 2.0;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexedStop {

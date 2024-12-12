@@ -522,7 +522,8 @@ impl<'a> InMemoryTimetableBuilder {
                                 .map(|to_stop| Transfer {
                                     to: to_stop.id(),
                                     from: from_stop.id(),
-                                    time: (latlng.distance(&to_stop.location()).rad()
+                                    time: (2.0
+                                        * latlng.distance(&to_stop.location()).rad()
                                         * EARTH_RADIUS_APPROX)
                                         as u64, // 1 meter per second.
                                 })
