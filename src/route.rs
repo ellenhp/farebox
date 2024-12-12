@@ -626,9 +626,9 @@ where
                     .last_step
                     .clone();
                 // Don't transfer twice in a row.
-                if self.step_log[last_step].route.is_none() {
-                    continue;
-                }
+                // if self.step_log[last_step].route.is_none() {
+                //     continue;
+                // }
                 let best_arrival_at_transfer_start = self.best_times_global[stop.id()]
                     .as_ref()
                     .unwrap()
