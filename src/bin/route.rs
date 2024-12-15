@@ -23,7 +23,7 @@ async fn main() -> Result<(), anyhow::Error> {
     env_logger::init();
     let args = BuildArgs::parse();
     let router = Router::new(
-        MmapTimetable::new(args.base_path.into())?,
+        MmapTimetable::open(&args.base_path.into())?,
         args.valhalla_endpoint,
     );
     let start_location = LatLng::from_degrees(47.4227246, -122.3004649);

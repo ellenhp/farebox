@@ -1,10 +1,8 @@
 use std::{fs, path::PathBuf};
 
 use clap::Parser;
-use farebox::raptor::timetable::{
-    in_memory::{InMemoryTimetable, InMemoryTimetableBuilder},
-    mmap::MmapTimetable,
-};
+use farebox::raptor::timetable::{in_memory::InMemoryTimetableBuilder, mmap::MmapTimetable};
+use log::debug;
 
 extern crate farebox;
 
@@ -18,34 +16,38 @@ struct BuildArgs {
     valhalla_endpoint: Option<String>,
 }
 
-async fn timetable_from_feeds(
+async fn timetable_from_feeds<'a>(
     paths: &[PathBuf],
+    base_path: &PathBuf,
     valhalla_endpoint: Option<String>,
-) -> InMemoryTimetable {
-    let in_memory_timetable = InMemoryTimetable::new();
-    let timetable = {
-        let mut in_memory_timetable_builder =
-            InMemoryTimetableBuilder::new(in_memory_timetable, valhalla_endpoint);
-        for gtfs in paths.iter().filter_map(|path| {
-            if path.ends_with(".json") {
-                return None;
-            }
-            if let Ok(feed) = gtfs_structures::Gtfs::from_path(path.to_str().unwrap()) {
-                Some(feed)
-            } else {
-                println!("Failed to load feed: {:?}", path);
-                None
-            }
-        }) {
-            in_memory_timetable_builder
-                .preprocess_gtfs(&gtfs)
-                .await
-                .unwrap();
+) -> Result<MmapTimetable<'a>, anyhow::Error> {
+    let mut timetables = Vec::new();
+    for (idx, path) in paths.iter().enumerate() {
+        if path.ends_with(".json") {
+            continue;
         }
-        in_memory_timetable_builder.calculate_transfers().await;
-        in_memory_timetable_builder.to_timetable()
-    };
-    timetable
+        let feed = if let Ok(feed) = gtfs_structures::Gtfs::from_path(path.to_str().unwrap()) {
+            feed
+        } else {
+            println!("Failed to load feed: {:?}", path);
+            continue;
+        };
+        debug!("Processing feed: {:?}", path);
+        let mut in_memory_timetable_builder = InMemoryTimetableBuilder::new();
+        in_memory_timetable_builder
+            .preprocess_gtfs(&feed)
+            .await
+            .unwrap();
+        let timetable_dir = base_path.join(idx.to_string());
+        fs::create_dir_all(&timetable_dir).unwrap();
+        timetables.push(
+            MmapTimetable::from_in_memory(&in_memory_timetable_builder, &timetable_dir)
+                .expect("Failed to create timetable"),
+        );
+    }
+    // Combine all timetables into a single one
+    let timetable = MmapTimetable::concatenate(&timetables, base_path, valhalla_endpoint).await?;
+    Ok(timetable)
 }
 
 #[tokio::main]
@@ -58,16 +60,17 @@ async fn main() {
             .map(|p| p.unwrap().path())
             .collect();
 
-        let timetable = timetable_from_feeds(&paths, args.valhalla_endpoint).await;
-        // let timetable = InMemoryTimetable::from_gtfs(&timetables, args.valhalla_endpoint).await;
-
-        MmapTimetable::from_in_memory(&timetable, &args.base_path.into())
-            .expect("Failed to build memory-mapped timetable.");
+        let _timetable =
+            timetable_from_feeds(&paths, &args.base_path.into(), args.valhalla_endpoint)
+                .await
+                .unwrap();
     } else {
-        let gtfs = gtfs_structures::Gtfs::from_path(&args.gtfs_path).unwrap();
-
-        let timetable = InMemoryTimetable::from_gtfs(&[gtfs], args.valhalla_endpoint).await;
-        MmapTimetable::from_in_memory(&timetable, &args.base_path.into())
-            .expect("Failed to build memory-mapped timetable.");
+        let _timetable = timetable_from_feeds(
+            &[args.gtfs_path.into()],
+            &args.base_path.into(),
+            args.valhalla_endpoint,
+        )
+        .await
+        .unwrap();
     }
 }

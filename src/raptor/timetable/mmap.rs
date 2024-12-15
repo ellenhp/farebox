@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     fs::{self, File},
     io::Write,
     marker::PhantomData,
@@ -9,21 +8,30 @@ use std::{
     slice,
 };
 
-use anyhow::Ok;
-use bytemuck::checked::cast_slice;
-use log::debug;
-use memmap2::{Mmap, MmapOptions};
+use anyhow::{Error, Ok};
+use bytemuck::{cast_slice_mut, checked::cast_slice};
+use log::{debug, warn};
+use memmap2::{Mmap, MmapMut, MmapOptions};
+use redb::Database;
+use reqwest::Client;
 use rstar::RTree;
 
-use crate::raptor::geomath::{lat_lng_to_cartesian, IndexedStop};
+use crate::{
+    raptor::geomath::{
+        lat_lng_to_cartesian, IndexedStop, EARTH_RADIUS_APPROX, FAKE_WALK_SPEED_SECONDS_PER_METER,
+    },
+    valhalla::{matrix_request, MatrixRequest, ValhallaLocation},
+};
 
 use super::{
-    in_memory::InMemoryTimetable, Route, RouteStop, Stop, StopRoute, Timetable, Transfer, Trip,
-    TripMetadata, TripStopTime,
+    in_memory::InMemoryTimetableBuilder, Route, RouteStop, Stop, StopRoute, Timetable, Transfer,
+    Trip, TripMetadata, TripStopTime, STOP_METADATA_TABLE, TRIP_METADATA_TABLE,
 };
 
 #[allow(unused)]
 pub struct MmapTimetable<'a> {
+    base_path: PathBuf,
+
     backing_routes: Pin<Mmap>,
     backing_route_stops: Pin<Mmap>,
     backing_route_trips: Pin<Mmap>,
@@ -43,8 +51,7 @@ pub struct MmapTimetable<'a> {
     transfers_slice: &'a [Transfer],
     rtree: RTree<IndexedStop>,
 
-    stop_metadata_map: HashMap<Stop, gtfs_structures::Stop>,
-    trip_metadata_map: HashMap<Trip, TripMetadata>,
+    metadata_db: redb::Database,
 
     phantom: &'a PhantomData<()>,
 }
@@ -123,17 +130,40 @@ impl<'a> Timetable<'a> for MmapTimetable<'a> {
             .collect()
     }
 
-    fn stop_metadata(&'a self) -> &'a HashMap<Stop, gtfs_structures::Stop> {
-        &self.stop_metadata_map
+    fn stop_metadata(&'a self, stop: &Stop) -> gtfs_structures::Stop {
+        let table = self
+            .metadata_db
+            .begin_read()
+            .expect("Read failed")
+            .open_table(STOP_METADATA_TABLE)
+            .expect("Failed to open table");
+
+        let bytes = table
+            .get(stop.id() as u64)
+            .expect("DB error")
+            .expect("Missing metadata for stop");
+        rmp_serde::from_slice(bytes.value()).expect("Deserialization failed")
     }
 
-    fn trip_metadata(&'a self) -> &'a HashMap<Trip, TripMetadata> {
-        &self.trip_metadata_map
+    fn trip_metadata(&'a self, trip: &Trip) -> TripMetadata {
+        let table = self
+            .metadata_db
+            .begin_read()
+            .expect("Read failed")
+            .open_table(TRIP_METADATA_TABLE)
+            .expect("Failed to open table");
+
+        let bytes = table
+            .get(trip.trip_index as u64)
+            .expect("DB error")
+            .expect("Missing metadata for trip");
+        rmp_serde::from_slice(bytes.value()).expect("Deserialization failed")
     }
 }
 
 impl<'a> MmapTimetable<'a> {
     fn assemble(
+        base_path: PathBuf,
         backing_routes: Pin<Mmap>,
         backing_route_stops: Pin<Mmap>,
         backing_route_trips: Pin<Mmap>,
@@ -143,8 +173,7 @@ impl<'a> MmapTimetable<'a> {
         backing_transfer_index: Pin<Mmap>,
         backing_transfers: Pin<Mmap>,
         rtree: RTree<IndexedStop>,
-        stop_metadata: HashMap<Stop, gtfs_structures::Stop>,
-        trip_metadata: HashMap<Trip, TripMetadata>,
+        metadata_db: Database,
     ) -> Result<MmapTimetable<'a>, anyhow::Error> {
         let routes = unsafe {
             let s = cast_slice::<u8, Route>(&backing_routes);
@@ -180,6 +209,7 @@ impl<'a> MmapTimetable<'a> {
         };
 
         let table = MmapTimetable {
+            base_path,
             backing_routes,
             backing_route_stops,
             backing_route_trips,
@@ -199,13 +229,13 @@ impl<'a> MmapTimetable<'a> {
             trip_stop_times_slice: trip_stop_times,
             transfer_index_slice: transfer_index,
             transfers_slice: transfers,
-            stop_metadata_map: stop_metadata,
-            trip_metadata_map: trip_metadata,
+
+            metadata_db,
         };
         Ok(table)
     }
 
-    pub fn new(base_path: PathBuf) -> Result<MmapTimetable<'a>, anyhow::Error> {
+    pub fn open(base_path: &PathBuf) -> Result<MmapTimetable<'a>, anyhow::Error> {
         debug!("Creating a new memory-mapped timetable. Opening files");
         debug!("Opening routes.");
         let routes = File::open(base_path.join("routes"))?;
@@ -224,18 +254,12 @@ impl<'a> MmapTimetable<'a> {
         debug!("Opening transfers.");
         let transfers = File::open(base_path.join("transfers"))?;
 
-        debug!("Opening stop metadata.");
-        let stop_metadata = File::open(base_path.join("stop_metadata")).unwrap();
-        let stop_metadata: HashMap<Stop, gtfs_structures::Stop> =
-            rmp_serde::from_read(&stop_metadata)?;
-
-        debug!("Opening trip metadata.");
-        let trip_metadata = File::open(base_path.join("trip_metadata"))?;
-        let trip_metadata: HashMap<Trip, TripMetadata> = rmp_serde::from_read(&trip_metadata)?;
-
         debug!("Opening rtree.");
         let rtree = File::open(base_path.join("rtree"))?;
         let rtree: RTree<IndexedStop> = rmp_serde::from_read(&rtree)?;
+
+        debug!("Opening metadata database");
+        let metadata_db = Database::open(base_path.join("metadata.db"))?;
 
         debug!("mmapping");
         let backing_routes = unsafe { MmapOptions::new().map(&routes)? };
@@ -248,6 +272,7 @@ impl<'a> MmapTimetable<'a> {
         let backing_transfers = unsafe { MmapOptions::new().map(&transfers)? };
 
         MmapTimetable::assemble(
+            base_path.clone(),
             Pin::new(backing_routes),
             Pin::new(backing_route_stops),
             Pin::new(backing_route_trips),
@@ -257,16 +282,17 @@ impl<'a> MmapTimetable<'a> {
             Pin::new(backing_transfer_index),
             Pin::new(backing_transfers),
             rtree,
-            stop_metadata,
-            trip_metadata,
+            metadata_db,
         )
     }
 
     pub fn from_in_memory(
-        in_memory_timetable: &InMemoryTimetable,
+        in_memory_timetable: &InMemoryTimetableBuilder,
         base_path: &PathBuf,
     ) -> Result<MmapTimetable<'a>, anyhow::Error> {
         fs::create_dir_all(base_path)?;
+
+        let in_memory_timetable = &in_memory_timetable.timetable;
 
         {
             // Drop all of these values before attempting to create a timetable from the raw data.
@@ -277,8 +303,8 @@ impl<'a> MmapTimetable<'a> {
                 let stops = File::create(base_path.join("stops"))?;
                 let stop_routes = File::create(base_path.join("stop_routes"))?;
                 let trip_stop_times = File::create(base_path.join("trip_stop_times"))?;
-                let transfer_index = File::create(base_path.join("transfer_index"))?;
-                let transfers = File::create(base_path.join("transfers"))?;
+                let _ = File::create(base_path.join("transfer_index"))?;
+                let _ = File::create(base_path.join("transfers"))?;
 
                 routes.set_len((size_of::<Route>() * in_memory_timetable.routes().len()) as u64)?;
                 route_stops.set_len(
@@ -294,12 +320,6 @@ impl<'a> MmapTimetable<'a> {
                 trip_stop_times.set_len(
                     (size_of::<TripStopTime>() * in_memory_timetable.trip_stop_times().len())
                         as u64,
-                )?;
-                transfer_index.set_len(
-                    (size_of::<usize>() * in_memory_timetable.transfer_index().len()) as u64,
-                )?;
-                transfers.set_len(
-                    (size_of::<Transfer>() * in_memory_timetable.transfers().len()) as u64,
                 )?;
             }
 
@@ -327,14 +347,6 @@ impl<'a> MmapTimetable<'a> {
                 .write(true)
                 .read(true)
                 .open(base_path.join("trip_stop_times"))?;
-            let transfer_index = File::options()
-                .write(true)
-                .read(true)
-                .open(base_path.join("transfer_index"))?;
-            let transfers = File::options()
-                .write(true)
-                .read(true)
-                .open(base_path.join("transfers"))?;
 
             let mut backing_routes = unsafe { MmapOptions::new().map_mut(&routes)? };
             let mut backing_route_stops = unsafe { MmapOptions::new().map_mut(&route_stops)? };
@@ -343,9 +355,6 @@ impl<'a> MmapTimetable<'a> {
             let mut backing_stop_routes = unsafe { MmapOptions::new().map_mut(&stop_routes)? };
             let mut backing_trip_stop_times =
                 unsafe { MmapOptions::new().map_mut(&trip_stop_times)? };
-            let mut backing_transfer_index =
-                unsafe { MmapOptions::new().map_mut(&transfer_index)? };
-            let mut backing_transfers = unsafe { MmapOptions::new().map_mut(&transfers)? };
 
             backing_routes.copy_from_slice(cast_slice(in_memory_timetable.routes()));
             backing_route_stops.copy_from_slice(cast_slice(in_memory_timetable.route_stops()));
@@ -354,27 +363,373 @@ impl<'a> MmapTimetable<'a> {
             backing_stop_routes.copy_from_slice(cast_slice(in_memory_timetable.stop_routes()));
             backing_trip_stop_times
                 .copy_from_slice(cast_slice(in_memory_timetable.trip_stop_times()));
-            backing_transfer_index
-                .copy_from_slice(cast_slice(in_memory_timetable.transfer_index()));
-            backing_transfers.copy_from_slice(cast_slice(in_memory_timetable.transfers()));
 
             {
                 let mut rtree = File::create(base_path.join("rtree"))?;
                 rtree.write_all(&rmp_serde::to_vec(&in_memory_timetable.stop_index_copy())?)?;
             }
+
+            let metadata_db = Database::create(base_path.join("metadata.db"))?;
             {
-                let mut stop_metadata = File::create(base_path.join("stop_metadata"))?;
-                stop_metadata.write_all(&rmp_serde::to_vec(
-                    &in_memory_timetable.stop_metadata().clone(),
-                )?)?;
+                let write = metadata_db.begin_write()?;
+                {
+                    let mut table = write.open_table(STOP_METADATA_TABLE)?;
+                    for stop in in_memory_timetable.stops() {
+                        let bytes = rmp_serde::to_vec(&in_memory_timetable.stop_metadata(stop))?;
+                        table.insert(stop.id() as u64, bytes.as_slice())?;
+                    }
+                }
+                write.commit()?;
             }
             {
-                let mut trip_metadata = File::create(base_path.join("trip_metadata"))?;
-                trip_metadata.write_all(&rmp_serde::to_vec(
-                    &in_memory_timetable.trip_metadata().clone(),
-                )?)?;
+                let write = metadata_db.begin_write()?;
+                {
+                    let mut table = write.open_table(TRIP_METADATA_TABLE)?;
+                    for trip in in_memory_timetable.route_trips() {
+                        let bytes = rmp_serde::to_vec(&in_memory_timetable.trip_metadata(trip))?;
+                        table.insert(trip.trip_index as u64, bytes.as_slice())?;
+                    }
+                }
+                write.commit()?;
             }
         }
-        MmapTimetable::new(base_path.clone())
+        MmapTimetable::open(base_path)
+    }
+
+    pub async fn concatenate<'b>(
+        timetables: &[MmapTimetable<'b>],
+        base_path: &PathBuf,
+        valhalla_endpoint: Option<String>,
+    ) -> Result<MmapTimetable<'b>, Error> {
+        {
+            let total_routes: usize = timetables.iter().map(|tt| tt.routes().len()).sum();
+            let total_route_stops: usize = timetables.iter().map(|tt| tt.route_stops().len()).sum();
+            let total_route_trips: usize = timetables.iter().map(|tt| tt.route_trips().len()).sum();
+            let total_stops: usize = timetables.iter().map(|tt| tt.stops().len()).sum();
+            let total_stop_routes: usize = timetables.iter().map(|tt| tt.stop_routes().len()).sum();
+            let total_trip_stop_times: usize =
+                timetables.iter().map(|tt| tt.trip_stop_times().len()).sum();
+            {
+                let routes = File::create(base_path.join("routes"))?;
+                let route_stops = File::create(base_path.join("route_stops"))?;
+                let route_trips = File::create(base_path.join("route_trips"))?;
+                let stops = File::create(base_path.join("stops"))?;
+                let stop_routes = File::create(base_path.join("stop_routes"))?;
+                let trip_stop_times = File::create(base_path.join("trip_stop_times"))?;
+
+                routes.set_len((size_of::<Route>() * total_routes) as u64)?;
+                route_stops.set_len((size_of::<RouteStop>() * total_route_stops) as u64)?;
+                route_trips.set_len((size_of::<Trip>() * total_route_trips) as u64)?;
+                stops.set_len((size_of::<Stop>() * total_stops) as u64)?;
+                stop_routes.set_len((size_of::<StopRoute>() * total_stop_routes) as u64)?;
+                trip_stop_times
+                    .set_len((size_of::<TripStopTime>() * total_trip_stop_times) as u64)?;
+            }
+
+            let routes = File::options()
+                .write(true)
+                .read(true)
+                .open(base_path.join("routes"))?;
+            let route_stops = File::options()
+                .write(true)
+                .read(true)
+                .open(base_path.join("route_stops"))?;
+            let route_trips = File::options()
+                .write(true)
+                .read(true)
+                .open(base_path.join("route_trips"))?;
+            let stops = File::options()
+                .write(true)
+                .read(true)
+                .open(base_path.join("stops"))?;
+            let stop_routes = File::options()
+                .write(true)
+                .read(true)
+                .open(base_path.join("stop_routes"))?;
+            let trip_stop_times = File::options()
+                .write(true)
+                .read(true)
+                .open(base_path.join("trip_stop_times"))?;
+            let _ = File::create(base_path.join("transfer_index"))?;
+            let _ = File::create(base_path.join("transfers"))?;
+
+            let mut backing_routes = unsafe { MmapOptions::new().map_mut(&routes)? };
+            let mut backing_route_stops = unsafe { MmapOptions::new().map_mut(&route_stops)? };
+            let mut backing_route_trips = unsafe { MmapOptions::new().map_mut(&route_trips)? };
+            let mut backing_stops = unsafe { MmapOptions::new().map_mut(&stops)? };
+            let mut backing_stop_routes = unsafe { MmapOptions::new().map_mut(&stop_routes)? };
+            let mut backing_trip_stop_times =
+                unsafe { MmapOptions::new().map_mut(&trip_stop_times)? };
+
+            let mut route_cursor = 0usize;
+            let mut route_stop_cursor = 0usize;
+            let mut route_trip_cursor = 0usize;
+            let mut stop_cursor = 0usize;
+            let mut stop_route_cursor = 0usize;
+            let mut trip_stop_time_cursor = 0usize;
+
+            let route_slice: &mut [Route] = cast_slice_mut(&mut backing_routes);
+            let route_stop_slice: &mut [RouteStop] = cast_slice_mut(&mut backing_route_stops);
+            let route_trip_slice: &mut [Trip] = cast_slice_mut(&mut backing_route_trips);
+            let stop_slice: &mut [Stop] = cast_slice_mut(&mut backing_stops);
+            let stop_route_slice: &mut [StopRoute] = cast_slice_mut(&mut backing_stop_routes);
+            let trip_stop_time_slice: &mut [TripStopTime] =
+                cast_slice_mut(&mut backing_trip_stop_times);
+
+            {
+                // Make mutable copies of the slices.
+                for tt in timetables {
+                    let route_slice =
+                        &mut route_slice[route_cursor..route_cursor + tt.routes().len()];
+                    let route_stop_slice = &mut route_stop_slice
+                        [route_stop_cursor..route_stop_cursor + tt.route_stops().len()];
+                    let route_trip_slice = &mut route_trip_slice
+                        [route_trip_cursor..route_trip_cursor + tt.route_trips().len()];
+                    let stop_slice = &mut stop_slice[stop_cursor..stop_cursor + tt.stops().len()];
+                    let stop_route_slice = &mut stop_route_slice
+                        [stop_route_cursor..stop_route_cursor + tt.stop_routes().len()];
+                    let trip_stop_time_slice = &mut trip_stop_time_slice
+                        [trip_stop_time_cursor..trip_stop_time_cursor + tt.trip_stop_times().len()];
+
+                    route_slice.copy_from_slice(tt.routes());
+                    route_stop_slice.copy_from_slice(tt.route_stops());
+                    route_trip_slice.copy_from_slice(tt.route_trips());
+                    stop_slice.copy_from_slice(tt.stops());
+                    stop_route_slice.copy_from_slice(tt.stop_routes());
+                    trip_stop_time_slice.copy_from_slice(tt.trip_stop_times());
+
+                    for route in route_slice {
+                        route.first_route_stop += route_stop_cursor;
+                        route.first_route_trip += route_trip_cursor;
+                        route.route_index += route_cursor;
+                    }
+                    for route_stop in route_stop_slice {
+                        route_stop.route_index += route_cursor;
+                        route_stop.stop_index += stop_cursor;
+                    }
+                    for route_trip in route_trip_slice {
+                        route_trip.trip_index += route_trip_cursor;
+                        route_trip.route_index += route_cursor;
+                        route_trip.first_trip_stop_time += trip_stop_time_cursor;
+                        route_trip.last_trip_stop_time += trip_stop_time_cursor;
+                    }
+                    for stop in stop_slice {
+                        stop.stop_index += stop_cursor;
+                        stop.first_stop_route_index = stop_route_cursor;
+                    }
+                    for stop_route in stop_route_slice {
+                        stop_route.route_index += route_cursor;
+                    }
+                    for trip_stop_time in trip_stop_time_slice {
+                        trip_stop_time.trip_index += route_trip_cursor;
+                    }
+
+                    route_cursor += tt.routes().len();
+                    route_stop_cursor += tt.route_stops().len();
+                    route_trip_cursor += tt.route_trips().len();
+                    stop_cursor += tt.stops().len();
+                    stop_route_cursor += tt.stop_routes().len();
+                    trip_stop_time_cursor += tt.trip_stop_times().len();
+                }
+            }
+            {
+                let mut rtree = RTree::<IndexedStop>::new();
+                for tt in timetables {
+                    for stop in tt.rtree.iter() {
+                        rtree.insert(stop.clone());
+                    }
+                }
+
+                let mut rtree_file = File::create(base_path.join("rtree"))?;
+                rtree_file.write_all(&rmp_serde::to_vec(&rtree)?)?;
+            }
+            let metadata_db = Database::create(base_path.join("metadata.db"))?;
+            {
+                let write = metadata_db.begin_write()?;
+                {
+                    let mut table = write.open_table(STOP_METADATA_TABLE)?;
+                    let mut cursor = 0usize;
+                    for tt in timetables {
+                        for stop in tt.stops() {
+                            let bytes = rmp_serde::to_vec(&tt.stop_metadata(stop))?;
+                            table.insert((cursor + stop.id()) as u64, bytes.as_slice())?;
+                        }
+                        cursor += tt.stops().len();
+                    }
+                }
+                write.commit()?;
+            }
+            {
+                let write = metadata_db.begin_write()?;
+                {
+                    let mut table = write.open_table(TRIP_METADATA_TABLE)?;
+                    let mut cursor = 0usize;
+                    for tt in timetables {
+                        for trip in tt.route_trips() {
+                            let bytes = rmp_serde::to_vec(&tt.trip_metadata(trip))?;
+                            table.insert((cursor + trip.trip_index) as u64, bytes.as_slice())?;
+                        }
+                        cursor += tt.route_trips().len();
+                    }
+                }
+                write.commit()?;
+            }
+        }
+        let mut tt = MmapTimetable::open(base_path)?;
+        tt.calculate_transfers(valhalla_endpoint).await?;
+        Ok(tt)
+    }
+
+    pub(crate) async fn calculate_transfers(
+        &mut self,
+        valhalla_endpoint: Option<String>,
+    ) -> Result<(), Error> {
+        assert_eq!(self.stops().len(), self.rtree.size());
+
+        let client = Client::new();
+        debug!("Calculating transfer times");
+        let transfers = {
+            let transfers: Vec<_> = self
+                .stops()
+                .iter()
+                .map(|from_stop| {
+                    let latlng = from_stop.location();
+                    let mut transfer_candidates = vec![];
+                    for (count, (to_stop, dist_sq)) in self
+                        .rtree
+                        .nearest_neighbor_iter_with_distance_2(&lat_lng_to_cartesian(
+                            latlng.lat.deg(),
+                            latlng.lng.deg(),
+                        ))
+                        .enumerate()
+                    {
+                        let dist = dist_sq.sqrt();
+                        if dist > 5000f64 {
+                            break;
+                        } else if dist > 3000f64 && count > 50 {
+                            break;
+                        }
+                        transfer_candidates.push(self.stop(to_stop.id));
+                    }
+                    (
+                        from_stop,
+                        transfer_candidates,
+                        client.clone(),
+                        valhalla_endpoint.clone(),
+                    )
+                })
+                .map(
+                    |(from_stop, transfer_candidates, client, valhalla_endpoint)| async move {
+                        let latlng = from_stop.location();
+                        if let Some(valhalla_endpoint) = valhalla_endpoint {
+                            let request = MatrixRequest {
+                                sources: vec![ValhallaLocation {
+                                    lat: latlng.lat.deg(),
+                                    lon: latlng.lng.deg(),
+                                }],
+                                targets: transfer_candidates
+                                    .iter()
+                                    .map(|stop| ValhallaLocation {
+                                        lat: stop.location().lat.deg(),
+                                        lon: stop.location().lng.deg(),
+                                    })
+                                    .collect(),
+                                costing: "pedestrian".to_string(),
+                                matrix_locations: usize::max(transfer_candidates.len(), 25),
+                            };
+                            let transfer_matrix_response =
+                                matrix_request(&client, &valhalla_endpoint, request)
+                                    .await
+                                    .unwrap();
+
+                            let mut line_items = vec![];
+
+                            for line_item in &transfer_matrix_response.sources_to_targets[0] {
+                                let to_index = if let Some(to_index) = line_item.to_index {
+                                    to_index
+                                } else {
+                                    warn!("Invalid line item in valhalla response {:?}", line_item);
+                                    continue;
+                                };
+                                let time = if let Some(time) = line_item.time {
+                                    time
+                                } else {
+                                    warn!("Invalid line item in valhalla response {:?}", line_item);
+                                    continue;
+                                };
+
+                                line_items.push(Transfer {
+                                    to: transfer_candidates[to_index].id(),
+                                    from: from_stop.id(),
+                                    time: time as u64,
+                                });
+                            }
+                            line_items
+                        } else {
+                            transfer_candidates
+                                .iter()
+                                .map(|to_stop| Transfer {
+                                    to: to_stop.id(),
+                                    from: from_stop.id(),
+                                    time: (FAKE_WALK_SPEED_SECONDS_PER_METER
+                                        * latlng.distance(&to_stop.location()).rad()
+                                        * EARTH_RADIUS_APPROX)
+                                        as u64, // 1 meter per second.
+                                })
+                                .collect()
+                        }
+                    },
+                )
+                .collect();
+            let mut awaited_transfers = vec![];
+            for transfer in transfers {
+                awaited_transfers.push(transfer.await);
+            }
+            awaited_transfers
+        };
+        let transfer_index_file = File::options()
+            .write(true)
+            .read(true)
+            .create(true)
+            .open(&self.base_path.join("transfer_index"))?;
+        transfer_index_file
+            .set_len((size_of::<usize>() * transfers.len()) as u64)
+            .unwrap();
+        let transfer_file = File::options()
+            .write(true)
+            .read(true)
+            .create(true)
+            .open(&self.base_path.join("transfers"))?;
+        transfer_file
+            .set_len(
+                transfers
+                    .iter()
+                    .map(|t| size_of::<Transfer>() * t.len())
+                    .sum::<usize>() as u64,
+            )
+            .unwrap();
+
+        let mut backing_transfer_index_mut =
+            unsafe { MmapMut::map_mut(&transfer_index_file).unwrap() };
+        let mut backing_transfers_mut = unsafe { MmapMut::map_mut(&transfer_file).unwrap() };
+
+        let out_transfer_index = unsafe {
+            let s = cast_slice_mut::<u8, usize>(&mut backing_transfer_index_mut);
+            slice::from_raw_parts_mut(s.as_mut_ptr(), s.len())
+        };
+        let out_transfers = unsafe {
+            let s = cast_slice_mut::<u8, Transfer>(&mut backing_transfers_mut);
+            slice::from_raw_parts_mut(s.as_mut_ptr(), s.len())
+        };
+
+        let mut total_transfers_processed = 0;
+        for (transfer_chunk_idx, transfers) in transfers.iter().enumerate() {
+            out_transfer_index[transfer_chunk_idx] = total_transfers_processed;
+            for transfer in transfers {
+                out_transfers[total_transfers_processed] = *transfer;
+                total_transfers_processed += 1;
+            }
+        }
+        Ok(())
     }
 }

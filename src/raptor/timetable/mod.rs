@@ -1,12 +1,13 @@
 pub mod in_memory;
 pub mod mmap;
 
-use std::{collections::HashMap, time::UNIX_EPOCH, u32};
+use std::{time::UNIX_EPOCH, u32};
 
 use bytemuck::{Pod, Zeroable};
 use chrono::{DateTime, Days, NaiveDate, NaiveDateTime, NaiveTime};
 
 use chrono_tz::Tz;
+use redb::TableDefinition;
 use rstar::RTree;
 use s2::latlng::LatLng;
 use serde::{Deserialize, Serialize};
@@ -14,6 +15,8 @@ use serde::{Deserialize, Serialize};
 use super::geomath::IndexedStop;
 
 static DAY_SECONDS: u32 = 86_400;
+const STOP_METADATA_TABLE: TableDefinition<u64, &[u8]> = TableDefinition::new("stop_metadata");
+const TRIP_METADATA_TABLE: TableDefinition<u64, &[u8]> = TableDefinition::new("trip_metadata");
 
 pub trait Timetable<'a> {
     fn route(&'a self, route_id: usize) -> &'a Route;
@@ -32,8 +35,8 @@ pub trait Timetable<'a> {
     fn stop_index_copy(&'a self) -> RTree<IndexedStop>;
     fn nearest_stops(&'a self, lat: f64, lng: f64, n: usize) -> Vec<(&'a Stop, f64)>;
 
-    fn stop_metadata(&'a self) -> &'a HashMap<Stop, gtfs_structures::Stop>;
-    fn trip_metadata(&'a self) -> &'a HashMap<Trip, TripMetadata>;
+    fn stop_metadata(&'a self, stop: &Stop) -> gtfs_structures::Stop;
+    fn trip_metadata(&'a self, trip: &Trip) -> TripMetadata;
 }
 
 #[derive(
@@ -66,8 +69,8 @@ impl<'a> Stop {
         s2::cellid::CellID(self.s2cell).into()
     }
 
-    pub fn metadata(&self, timetable: &'a dyn Timetable<'a>) -> &'a gtfs_structures::Stop {
-        &timetable.stop_metadata()[self]
+    pub fn metadata(&self, timetable: &'a dyn Timetable<'a>) -> gtfs_structures::Stop {
+        timetable.stop_metadata(self).clone()
     }
 }
 
@@ -122,12 +125,12 @@ impl<'a> Trip {
     }
 
     #[inline]
-    pub fn route(&self, timetable: &'a dyn Timetable<'a>) -> &'a Route {
-        &timetable.routes()[self.route_index]
+    pub fn route(&self, timetable: &'a dyn Timetable<'a>) -> Route {
+        timetable.routes()[self.route_index].clone()
     }
 
-    pub fn metadata(&self, timetable: &'a dyn Timetable<'a>) -> &'a TripMetadata {
-        &timetable.trip_metadata()[self]
+    pub fn metadata(&self, timetable: &'a dyn Timetable<'a>) -> TripMetadata {
+        timetable.trip_metadata(self).clone()
     }
 }
 

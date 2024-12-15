@@ -105,7 +105,7 @@ fn rocket() -> _ {
     env_logger::init();
     let args = ServeArgs::parse();
     let router = Router::new(
-        MmapTimetable::new(args.base_path.into()).unwrap(),
+        MmapTimetable::open(&args.base_path.into()).unwrap(),
         args.valhalla_endpoint,
     );
 

@@ -272,7 +272,7 @@ struct InternalStep<'a> {
     previous_step: usize,
     from: InternalStepLocation<'a>,
     to: InternalStepLocation<'a>,
-    route: Option<&'a Route>,
+    route: Option<Route>,
     departure: Time,
     arrival: Time,
     trip: Option<Trip>,
@@ -385,7 +385,7 @@ where
         departure_time: Time,
         to: &InternalStepLocation<'a>,
         arrival_time: Time,
-        via: Option<&'a Route>,
+        via: Option<Route>,
         on_trip: Option<Trip>,
         previous_step: usize,
     ) -> bool {

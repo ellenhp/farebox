@@ -6,28 +6,21 @@ use std::{
 
 use chrono::{Days, Local, TimeDelta, TimeZone};
 use chrono_tz::Tz;
-use gtfs_structures::{DirectionType, Gtfs};
+use gtfs_structures::Gtfs;
 use log::{debug, warn};
-use reqwest::Client;
 use rstar::RTree;
 use s2::{cellid::CellID, latlng::LatLng};
 
-use crate::{
-    raptor::{
-        geomath::{
-            lat_lng_to_cartesian, IndexedStop, EARTH_RADIUS_APPROX,
-            FAKE_WALK_SPEED_SECONDS_PER_METER,
-        },
-        timetable::{Route, RouteStop, Stop, StopRoute, Transfer, Trip, TripStopTime},
-    },
-    valhalla::{matrix_request, MatrixRequest, ValhallaLocation},
+use crate::raptor::{
+    geomath::{lat_lng_to_cartesian, IndexedStop},
+    timetable::{Route, RouteStop, Stop, StopRoute, Transfer, Trip, TripStopTime},
 };
 
 use super::{Timetable, TripMetadata};
 
 #[derive(Debug, Clone)]
 #[repr(C)]
-pub struct InMemoryTimetable {
+pub(crate) struct InMemoryTimetable {
     routes: Vec<Route>,
     route_stops: Vec<RouteStop>,
     route_trips: Vec<Trip>,
@@ -102,12 +95,12 @@ impl<'a> Timetable<'a> for InMemoryTimetable {
         &self.transfer_index
     }
 
-    fn stop_metadata(&'a self) -> &'a HashMap<Stop, gtfs_structures::Stop> {
-        &self.stop_metadata_map
+    fn stop_metadata(&'a self, stop: &Stop) -> gtfs_structures::Stop {
+        self.stop_metadata_map[stop].clone()
     }
 
-    fn trip_metadata(&'a self) -> &'a HashMap<Trip, TripMetadata> {
-        &self.trip_metadata_map
+    fn trip_metadata(&'a self, trip: &Trip) -> TripMetadata {
+        self.trip_metadata_map[trip].clone()
     }
 
     fn stop_index_copy(&'a self) -> RTree<IndexedStop> {
@@ -126,7 +119,7 @@ impl<'a> Timetable<'a> for InMemoryTimetable {
 }
 
 impl<'a> InMemoryTimetable {
-    pub fn new() -> InMemoryTimetable {
+    pub(crate) fn new() -> InMemoryTimetable {
         InMemoryTimetable {
             routes: vec![],
             route_stops: vec![],
@@ -140,23 +133,6 @@ impl<'a> InMemoryTimetable {
             trip_metadata_map: HashMap::new(),
             stop_metadata_map: HashMap::new(),
         }
-    }
-
-    pub async fn from_gtfs(gtfs: &[Gtfs], valhalla_endpoint: Option<String>) -> InMemoryTimetable {
-        let in_memory_timetable = InMemoryTimetable::new();
-        let timetable = {
-            let mut in_memory_timetable_builder =
-                InMemoryTimetableBuilder::new(in_memory_timetable, valhalla_endpoint);
-            for gtfs in gtfs {
-                in_memory_timetable_builder
-                    .preprocess_gtfs(gtfs)
-                    .await
-                    .unwrap();
-            }
-            in_memory_timetable_builder.calculate_transfers().await;
-            in_memory_timetable_builder.to_timetable()
-        };
-        timetable
     }
 }
 
@@ -174,15 +150,11 @@ pub struct InMemoryTimetableBuilder {
     next_route_trip_id: usize,
     next_route_stop_id: usize,
     next_trip_stop_time_id: usize,
-    timetable: InMemoryTimetable,
-    valhalla_endpoint: Option<String>,
+    pub(crate) timetable: InMemoryTimetable,
 }
 
 impl<'a> InMemoryTimetableBuilder {
-    pub fn new(
-        timetable: InMemoryTimetable,
-        valhalla_endpoint: Option<String>,
-    ) -> InMemoryTimetableBuilder {
+    pub fn new() -> InMemoryTimetableBuilder {
         InMemoryTimetableBuilder {
             next_stop_id: 0,
             next_stop_route_id: 0,
@@ -190,8 +162,7 @@ impl<'a> InMemoryTimetableBuilder {
             next_route_trip_id: 0,
             next_route_stop_id: 0,
             next_trip_stop_time_id: 0,
-            timetable,
-            valhalla_endpoint: valhalla_endpoint,
+            timetable: InMemoryTimetable::new(),
         }
     }
 
@@ -423,132 +394,6 @@ impl<'a> InMemoryTimetableBuilder {
                 });
             }
         }
-
         Result::Ok(())
-    }
-
-    pub async fn calculate_transfers(&mut self) {
-        assert_eq!(
-            self.timetable.stops.len(),
-            self.timetable.rtree.lock().unwrap().size()
-        );
-
-        let client = Client::new();
-        debug!("Calculating transfer times");
-        let transfers = {
-            let transfers: Vec<_> = self
-                .timetable
-                .stops
-                .iter()
-                .map(|from_stop| {
-                    let latlng = from_stop.location();
-                    let mut transfer_candidates = vec![];
-                    for (count, (to_stop, dist_sq)) in self
-                        .timetable
-                        .rtree
-                        .lock()
-                        .unwrap()
-                        .nearest_neighbor_iter_with_distance_2(&lat_lng_to_cartesian(
-                            latlng.lat.deg(),
-                            latlng.lng.deg(),
-                        ))
-                        .enumerate()
-                    {
-                        let dist = dist_sq.sqrt();
-                        if dist > 5000f64 {
-                            break;
-                        } else if dist > 3000f64 && count > 50 {
-                            break;
-                        }
-                        transfer_candidates.push(self.timetable.stop(to_stop.id));
-                    }
-                    (
-                        from_stop,
-                        transfer_candidates,
-                        client.clone(),
-                        self.valhalla_endpoint.clone(),
-                    )
-                })
-                .map(
-                    |(from_stop, transfer_candidates, client, valhalla_endpoint)| async move {
-                        let latlng = from_stop.location();
-                        if let Some(valhalla_endpoint) = valhalla_endpoint {
-                            let request = MatrixRequest {
-                                sources: vec![ValhallaLocation {
-                                    lat: latlng.lat.deg(),
-                                    lon: latlng.lng.deg(),
-                                }],
-                                targets: transfer_candidates
-                                    .iter()
-                                    .map(|stop| ValhallaLocation {
-                                        lat: stop.location().lat.deg(),
-                                        lon: stop.location().lng.deg(),
-                                    })
-                                    .collect(),
-                                costing: "pedestrian".to_string(),
-                                matrix_locations: usize::max(transfer_candidates.len(), 25),
-                            };
-                            let transfer_matrix_response =
-                                matrix_request(&client, &valhalla_endpoint, request)
-                                    .await
-                                    .unwrap();
-
-                            let mut line_items = vec![];
-
-                            for line_item in &transfer_matrix_response.sources_to_targets[0] {
-                                let to_index = if let Some(to_index) = line_item.to_index {
-                                    to_index
-                                } else {
-                                    warn!("Invalid line item in valhalla response {:?}", line_item);
-                                    continue;
-                                };
-                                let time = if let Some(time) = line_item.time {
-                                    time
-                                } else {
-                                    warn!("Invalid line item in valhalla response {:?}", line_item);
-                                    continue;
-                                };
-
-                                line_items.push(Transfer {
-                                    to: transfer_candidates[to_index].id(),
-                                    from: from_stop.id(),
-                                    time: time as u64,
-                                });
-                            }
-                            line_items
-                        } else {
-                            transfer_candidates
-                                .iter()
-                                .map(|to_stop| Transfer {
-                                    to: to_stop.id(),
-                                    from: from_stop.id(),
-                                    time: (FAKE_WALK_SPEED_SECONDS_PER_METER
-                                        * latlng.distance(&to_stop.location()).rad()
-                                        * EARTH_RADIUS_APPROX)
-                                        as u64, // 1 meter per second.
-                                })
-                                .collect()
-                        }
-                    },
-                )
-                .collect();
-            let mut awaited_transfers = vec![];
-            for transfer in transfers {
-                awaited_transfers.push(transfer.await);
-            }
-            awaited_transfers
-        };
-        for transfers in transfers {
-            self.timetable
-                .transfer_index
-                .push(self.timetable.transfers.len());
-            for transfer in transfers {
-                self.timetable.transfers.push(transfer);
-            }
-        }
-    }
-
-    pub fn to_timetable(self) -> InMemoryTimetable {
-        self.timetable.clone()
     }
 }
