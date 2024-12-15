@@ -396,13 +396,16 @@ where
                 } else {
                     true
                 };
+            if !is_better_than_destination_global {
+                return false;
+            }
             let is_best_global = if let Some(previous_best) = &self.best_times_global[stop.id()] {
                 &arrival_time < &previous_best.final_time
             } else {
                 true
             };
             let round = round as usize;
-            if is_best_global && is_better_than_destination_global {
+            if is_best_global {
                 let latest_step = InternalStep {
                     from: from.clone(),
                     to: to.clone(),

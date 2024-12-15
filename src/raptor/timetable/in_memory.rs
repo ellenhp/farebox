@@ -210,18 +210,14 @@ impl<'a> InMemoryTimetableBuilder {
         }
 
         let mut route_to_route_id: BTreeMap<Vec<usize>, usize> = BTreeMap::new();
-        let mut stop_to_route: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         let mut route_id_to_trip_list: BTreeMap<usize, Vec<(u16, String)>> = BTreeMap::new();
         let mut stop_id_to_route_list: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
         for (gtfs_trip_id, trip) in &gtfs.trips {
-            let mut trip_stops: Vec<usize> = trip
+            let trip_stops: Vec<usize> = trip
                 .stop_times
                 .iter()
                 .map(|time| *stop_to_stop_id_map.get(&time.stop.id).unwrap())
                 .collect();
-            if trip.direction_id == Some(DirectionType::Inbound) {
-                trip_stops.reverse();
-            }
             let route_id = if let Some(id) = route_to_route_id.get(&trip_stops) {
                 *id
             } else {
@@ -249,14 +245,6 @@ impl<'a> InMemoryTimetableBuilder {
                         .get_mut(&route_id)
                         .unwrap()
                         .push((day, gtfs_trip_id.clone()));
-                }
-            }
-
-            for stop_time in &trip.stop_times {
-                if let Some(routes) = stop_to_route.get_mut(&stop_time.stop.id) {
-                    routes.push(route_id);
-                } else {
-                    stop_to_route.insert(stop_time.stop.id.clone(), vec![route_id]);
                 }
             }
         }
@@ -329,7 +317,13 @@ impl<'a> InMemoryTimetableBuilder {
 
                     let trip = gtfs.get_trip(gtfs_trip_id).unwrap();
 
+                    let mut prev_time = 0u32;
                     for (stop_seq, stop_time) in trip.stop_times.iter().enumerate() {
+                        #[cfg(feature = "enforce_invariants")]
+                        if let Some(arrival_time) = stop_time.arrival_time {
+                            assert!(arrival_time >= prev_time);
+                            prev_time = arrival_time;
+                        }
                         let day_start = agency_tz
                             .from_local_datetime(
                                 &start_date

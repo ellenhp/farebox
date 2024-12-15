@@ -5,6 +5,10 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+enforce_invariants = []
+default = ["enforce_invariants"]
+
 [dependencies]
 anyhow = "1.0.71"
 chrono = "0.4.24"
