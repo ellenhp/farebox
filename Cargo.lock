@@ -666,6 +666,7 @@ dependencies = [
  "clap",
  "env_logger",
  "flatdata",
+ "futures",
  "gtfs-structures",
  "log",
  "memmap2 0.6.2",
