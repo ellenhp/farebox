@@ -534,10 +534,15 @@ impl<'a> MmapTimetable<'a> {
             }
             {
                 let mut rtree = RTree::<IndexedStop>::new();
+                let mut stop_cursor = 0;
+
                 for tt in timetables {
                     for stop in tt.rtree.iter() {
+                        let mut stop = stop.clone();
+                        stop.id += stop_cursor;
                         rtree.insert(stop.clone());
                     }
+                    stop_cursor += tt.stop_count();
                 }
 
                 let mut rtree_file = File::create(base_path.join("rtree"))?;
