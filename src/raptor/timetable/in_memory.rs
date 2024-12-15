@@ -6,7 +6,7 @@ use std::{
 
 use chrono::{Days, Local, TimeDelta, TimeZone};
 use chrono_tz::Tz;
-use gtfs_structures::Gtfs;
+use gtfs_structures::{DirectionType, Gtfs};
 use log::{debug, warn};
 use reqwest::Client;
 use rstar::RTree;
@@ -214,16 +214,20 @@ impl<'a> InMemoryTimetableBuilder {
         let mut route_id_to_trip_list: BTreeMap<usize, Vec<(u16, String)>> = BTreeMap::new();
         let mut stop_id_to_route_list: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
         for (gtfs_trip_id, trip) in &gtfs.trips {
-            let trip_stops: Vec<usize> = trip
+            let mut trip_stops: Vec<usize> = trip
                 .stop_times
                 .iter()
                 .map(|time| *stop_to_stop_id_map.get(&time.stop.id).unwrap())
                 .collect();
+            if trip.direction_id == Some(DirectionType::Inbound) {
+                trip_stops.reverse();
+            }
             let route_id = if let Some(id) = route_to_route_id.get(&trip_stops) {
                 *id
             } else {
                 let id = self.next_route_id;
                 route_to_route_id.insert(trip_stops.clone(), id);
+                route_id_to_trip_list.insert(id, vec![]);
                 self.next_route_id += 1;
                 id
             };
@@ -239,7 +243,6 @@ impl<'a> InMemoryTimetableBuilder {
 
             let trip_days = gtfs.trip_days(&trip.service_id, start_date.clone());
 
-            route_id_to_trip_list.insert(route_id, vec![]);
             for day in trip_days {
                 if day <= 7 {
                     route_id_to_trip_list
