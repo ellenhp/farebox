@@ -76,7 +76,7 @@ async fn index(from: &str, to: &str, router: &State<Router<'_, MmapTimetable<'_>
 
     if let Some(route) = router
         .route(
-            Time::from_epoch_seconds(1734242829),
+            Time::now(),
             from,
             to,
             Some(5000f64),
