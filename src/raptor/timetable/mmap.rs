@@ -15,6 +15,7 @@ use memmap2::{Mmap, MmapMut, MmapOptions};
 use redb::Database;
 use reqwest::Client;
 use rstar::RTree;
+use s2::latlng::LatLng;
 
 use crate::{
     raptor::geomath::{
@@ -533,18 +534,7 @@ impl<'a> MmapTimetable<'a> {
                 }
             }
             {
-                let mut rtree = RTree::<IndexedStop>::new();
-                let mut stop_cursor = 0;
-
-                for tt in timetables {
-                    for stop in tt.rtree.iter() {
-                        let mut stop = stop.clone();
-                        stop.id += stop_cursor;
-                        rtree.insert(stop.clone());
-                    }
-                    stop_cursor += tt.stop_count();
-                }
-
+                let rtree = RTree::<IndexedStop>::new();
                 let mut rtree_file = File::create(base_path.join("rtree"))?;
                 rtree_file.write_all(&rmp_serde::to_vec(&rtree)?)?;
             }
@@ -589,6 +579,19 @@ impl<'a> MmapTimetable<'a> {
         &mut self,
         valhalla_endpoint: Option<String>,
     ) -> Result<(), Error> {
+        {
+            let mut rtree = RTree::<IndexedStop>::new();
+
+            for (stop_id, stop) in self.stops().iter().enumerate() {
+                let latlng: LatLng = s2::cellid::CellID(stop.s2cell).into();
+                let location_cartesian = lat_lng_to_cartesian(latlng.lat.deg(), latlng.lng.deg());
+                rtree.insert(IndexedStop {
+                    coords: location_cartesian,
+                    id: stop_id,
+                });
+            }
+            self.rtree = rtree;
+        }
         assert_eq!(self.stops().len(), self.rtree.size());
 
         let client = Client::new();
@@ -692,6 +695,12 @@ impl<'a> MmapTimetable<'a> {
             }
             awaited_transfers
         };
+        {
+            let rtree = RTree::<IndexedStop>::new();
+            let mut rtree_file = File::create(&self.base_path.join("rtree"))?;
+            rtree_file.write_all(&rmp_serde::to_vec(&rtree)?)?;
+        }
+
         let transfer_index_file = File::options()
             .write(true)
             .read(true)

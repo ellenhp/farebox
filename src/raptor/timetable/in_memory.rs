@@ -1,6 +1,5 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
-    sync::{Arc, Mutex},
     u32,
 };
 
@@ -12,7 +11,7 @@ use rstar::RTree;
 use s2::{cellid::CellID, latlng::LatLng};
 
 use crate::raptor::{
-    geomath::{lat_lng_to_cartesian, IndexedStop},
+    geomath::IndexedStop,
     timetable::{Route, RouteStop, Stop, StopRoute, Transfer, Trip, TripStopTime},
 };
 
@@ -29,7 +28,6 @@ pub(crate) struct InMemoryTimetable {
     trip_stop_times: Vec<TripStopTime>,
     transfer_index: Vec<usize>,
     transfers: Vec<Transfer>,
-    rtree: Arc<Mutex<RTree<IndexedStop>>>,
     trip_metadata_map: HashMap<Trip, TripMetadata>,
     stop_metadata_map: HashMap<Stop, gtfs_structures::Stop>,
 }
@@ -104,17 +102,11 @@ impl<'a> Timetable<'a> for InMemoryTimetable {
     }
 
     fn stop_index_copy(&'a self) -> RTree<IndexedStop> {
-        self.rtree.lock().unwrap().clone()
+        RTree::new()
     }
 
-    fn nearest_stops(&'a self, lat: f64, lng: f64, n: usize) -> Vec<(&'a Stop, f64)> {
-        self.rtree
-            .lock()
-            .unwrap()
-            .nearest_neighbor_iter_with_distance_2(&lat_lng_to_cartesian(lat, lng))
-            .take(n)
-            .map(|(stop, dist_sq)| (self.stop(stop.id), dist_sq.sqrt()))
-            .collect()
+    fn nearest_stops(&'a self, _lat: f64, _lng: f64, _n: usize) -> Vec<(&'a Stop, f64)> {
+        Vec::new()
     }
 }
 
@@ -129,7 +121,6 @@ impl<'a> InMemoryTimetable {
             trip_stop_times: vec![],
             transfer_index: vec![],
             transfers: vec![],
-            rtree: Arc::new(Mutex::new(RTree::new())),
             trip_metadata_map: HashMap::new(),
             stop_metadata_map: HashMap::new(),
         }
@@ -166,7 +157,7 @@ impl<'a> InMemoryTimetableBuilder {
         }
     }
 
-    pub async fn preprocess_gtfs(&mut self, gtfs: &Gtfs) -> Result<(), anyhow::Error> {
+    pub fn preprocess_gtfs(&mut self, gtfs: &Gtfs) -> Result<(), anyhow::Error> {
         let agencies: HashMap<String, _> = gtfs
             .agencies
             .iter()
@@ -288,6 +279,7 @@ impl<'a> InMemoryTimetableBuilder {
 
                     let trip = gtfs.get_trip(gtfs_trip_id).unwrap();
 
+                    #[cfg(feature = "enforce_invariants")]
                     let mut prev_time = 0u32;
                     for (stop_seq, stop_time) in trip.stop_times.iter().enumerate() {
                         #[cfg(feature = "enforce_invariants")]
@@ -387,11 +379,6 @@ impl<'a> InMemoryTimetableBuilder {
                     });
                     self.next_stop_route_id += 1;
                 }
-                let location_cartesian = lat_lng_to_cartesian(lat, lng);
-                self.timetable.rtree.lock().unwrap().insert(IndexedStop {
-                    coords: location_cartesian,
-                    id: *stop_id,
-                });
             }
         }
         Result::Ok(())
