@@ -256,8 +256,12 @@ impl<'a> MmapTimetable<'a> {
         let transfers = File::open(base_path.join("transfers"))?;
 
         debug!("Opening rtree.");
-        let rtree = File::open(base_path.join("rtree"))?;
-        let rtree: RTree<IndexedStop> = rmp_serde::from_read(&rtree)?;
+        let rtree: RTree<IndexedStop> =
+            if let Result::Ok(rtree) = File::open(base_path.join("rtree")) {
+                rmp_serde::from_read(&rtree)?
+            } else {
+                RTree::new()
+            };
 
         debug!("Opening metadata database");
         let metadata_db = Database::open(base_path.join("metadata.db"))?;
@@ -364,11 +368,6 @@ impl<'a> MmapTimetable<'a> {
             backing_stop_routes.copy_from_slice(cast_slice(in_memory_timetable.stop_routes()));
             backing_trip_stop_times
                 .copy_from_slice(cast_slice(in_memory_timetable.trip_stop_times()));
-
-            {
-                let mut rtree = File::create(base_path.join("rtree"))?;
-                rtree.write_all(&rmp_serde::to_vec(&in_memory_timetable.stop_index_copy())?)?;
-            }
 
             let metadata_db = Database::create(base_path.join("metadata.db"))?;
             {
@@ -533,11 +532,6 @@ impl<'a> MmapTimetable<'a> {
                     trip_stop_time_cursor += tt.trip_stop_times().len();
                 }
             }
-            {
-                let rtree = RTree::<IndexedStop>::new();
-                let mut rtree_file = File::create(base_path.join("rtree"))?;
-                rtree_file.write_all(&rmp_serde::to_vec(&rtree)?)?;
-            }
             let metadata_db = Database::create(base_path.join("metadata.db"))?;
             {
                 let write = metadata_db.begin_write()?;
@@ -696,9 +690,8 @@ impl<'a> MmapTimetable<'a> {
             awaited_transfers
         };
         {
-            let rtree = RTree::<IndexedStop>::new();
             let mut rtree_file = File::create(&self.base_path.join("rtree"))?;
-            rtree_file.write_all(&rmp_serde::to_vec(&rtree)?)?;
+            rtree_file.write_all(&rmp_serde::to_vec(&self.rtree)?)?;
         }
 
         let transfer_index_file = File::options()
