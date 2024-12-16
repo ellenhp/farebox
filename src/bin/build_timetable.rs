@@ -74,6 +74,10 @@ async fn timetable_from_feeds<'a>(
 async fn main() {
     env_logger::init();
     let args = BuildArgs::parse();
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(args.num_threads)
+        .build_global()
+        .unwrap();
     if fs::metadata(&args.gtfs_path).unwrap().is_dir() {
         let paths: Vec<PathBuf> = fs::read_dir(&args.gtfs_path)
             .unwrap()

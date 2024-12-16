@@ -669,7 +669,7 @@ dependencies = [
  "futures",
  "gtfs-structures",
  "log",
- "memmap2 0.6.2",
+ "memmap2 0.9.5",
  "rayon",
  "redb",
  "reqwest",
@@ -1417,9 +1417,9 @@ dependencies = [
 
 [[package]]
 name = "memmap2"
-version = "0.6.2"
+version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d28bba84adfe6646737845bc5ebbfa2c08424eb1c37e94a1fd2a82adb56a872"
+checksum = "fd3f7eed9d3848f8b98834af67102b720745c4ec028fcd0aa0239277e7de374f"
 dependencies = [
  "libc",
 ]

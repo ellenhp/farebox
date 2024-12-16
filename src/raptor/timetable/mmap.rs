@@ -266,15 +266,19 @@ impl<'a> MmapTimetable<'a> {
         debug!("Opening metadata database");
         let metadata_db = Database::open(base_path.join("metadata.db"))?;
 
+        let page_bits = Some(21);
+
         debug!("mmapping");
-        let backing_routes = unsafe { MmapOptions::new().map(&routes)? };
-        let backing_route_stops = unsafe { MmapOptions::new().map(&route_stops)? };
-        let backing_route_trips = unsafe { MmapOptions::new().map(&route_trips)? };
-        let backing_stops = unsafe { MmapOptions::new().map(&stops)? };
-        let backing_stop_routes = unsafe { MmapOptions::new().map(&stop_routes)? };
-        let backing_trip_stop_times = unsafe { MmapOptions::new().map(&trip_stop_times)? };
-        let backing_transfer_index = unsafe { MmapOptions::new().map(&transfer_index)? };
-        let backing_transfers = unsafe { MmapOptions::new().map(&transfers)? };
+        let backing_routes = unsafe { MmapOptions::new().huge(page_bits).map(&routes)? };
+        let backing_route_stops = unsafe { MmapOptions::new().huge(page_bits).map(&route_stops)? };
+        let backing_route_trips = unsafe { MmapOptions::new().huge(page_bits).map(&route_trips)? };
+        let backing_stops = unsafe { MmapOptions::new().huge(page_bits).map(&stops)? };
+        let backing_stop_routes = unsafe { MmapOptions::new().huge(page_bits).map(&stop_routes)? };
+        let backing_trip_stop_times =
+            unsafe { MmapOptions::new().huge(page_bits).map(&trip_stop_times)? };
+        let backing_transfer_index =
+            unsafe { MmapOptions::new().huge(page_bits).map(&transfer_index)? };
+        let backing_transfers = unsafe { MmapOptions::new().huge(page_bits).map(&transfers)? };
 
         MmapTimetable::assemble(
             base_path.clone(),
