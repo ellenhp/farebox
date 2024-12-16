@@ -515,7 +515,7 @@ impl<'a> MmapTimetable<'a> {
                     }
                     for stop in stop_slice {
                         stop.stop_index += stop_cursor;
-                        stop.first_stop_route_index = stop_route_cursor;
+                        stop.first_stop_route_index += stop_route_cursor;
                     }
                     for stop_route in stop_route_slice {
                         stop_route.route_index += route_cursor;
