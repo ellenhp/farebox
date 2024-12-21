@@ -1,6 +1,5 @@
 use std::{
     fs::{self, File},
-    io::Write,
     marker::PhantomData,
     mem::size_of,
     path::PathBuf,
@@ -173,7 +172,6 @@ impl<'a> MmapTimetable<'a> {
         backing_trip_stop_times: Pin<Mmap>,
         backing_transfer_index: Pin<Mmap>,
         backing_transfers: Pin<Mmap>,
-        rtree: RTree<IndexedStop>,
         metadata_db: Database,
     ) -> Result<MmapTimetable<'a>, anyhow::Error> {
         let routes = unsafe {
@@ -207,6 +205,22 @@ impl<'a> MmapTimetable<'a> {
         let transfers = unsafe {
             let s = cast_slice::<u8, Transfer>(&backing_transfers);
             slice::from_raw_parts(s.as_ptr(), s.len())
+        };
+        let rtree = {
+            RTree::bulk_load(
+                stops
+                    .iter()
+                    .map(|stop| {
+                        let latlng: LatLng = s2::cellid::CellID(stop.s2cell).into();
+                        let location_cartesian =
+                            lat_lng_to_cartesian(latlng.lat.deg(), latlng.lng.deg());
+                        IndexedStop {
+                            coords: location_cartesian,
+                            id: stop.id(),
+                        }
+                    })
+                    .collect(),
+            )
         };
 
         let table = MmapTimetable {
@@ -255,14 +269,6 @@ impl<'a> MmapTimetable<'a> {
         debug!("Opening transfers.");
         let transfers = File::open(base_path.join("transfers"))?;
 
-        debug!("Opening rtree.");
-        let rtree: RTree<IndexedStop> =
-            if let Result::Ok(rtree) = File::open(base_path.join("rtree")) {
-                rmp_serde::from_read(&rtree)?
-            } else {
-                RTree::new()
-            };
-
         debug!("Opening metadata database");
         let metadata_db = Database::open(base_path.join("metadata.db"))?;
 
@@ -290,7 +296,6 @@ impl<'a> MmapTimetable<'a> {
             Pin::new(backing_trip_stop_times),
             Pin::new(backing_transfer_index),
             Pin::new(backing_transfers),
-            rtree,
             metadata_db,
         )
     }
@@ -680,7 +685,7 @@ impl<'a> MmapTimetable<'a> {
                                     time: (FAKE_WALK_SPEED_SECONDS_PER_METER
                                         * latlng.distance(&to_stop.location()).rad()
                                         * EARTH_RADIUS_APPROX)
-                                        as u64, // 1 meter per second.
+                                        as u64,
                                 })
                                 .collect()
                         }
@@ -693,10 +698,6 @@ impl<'a> MmapTimetable<'a> {
             }
             awaited_transfers
         };
-        {
-            let mut rtree_file = File::create(&self.base_path.join("rtree"))?;
-            rtree_file.write_all(&rmp_serde::to_vec(&self.rtree)?)?;
-        }
 
         let transfer_index_file = File::options()
             .write(true)
