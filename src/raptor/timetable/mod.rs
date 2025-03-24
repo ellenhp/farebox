@@ -248,8 +248,6 @@ impl<'a> TripStopTime {
     #[inline]
     pub fn route_stop(&self, timetable: &'a dyn Timetable<'a>) -> &'a RouteStop {
         let route = &timetable.route_trips()[self.trip_index].route(timetable);
-        // dbg!(route);
-        // dbg!(self);
         &timetable.route_stops()[route.first_route_stop + self.route_stop_seq]
     }
 }

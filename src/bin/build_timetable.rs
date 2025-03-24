@@ -28,9 +28,6 @@ fn process_gtfs<'a>(
     path: &PathBuf,
     base_path: &PathBuf,
 ) -> Result<MmapTimetable<'a>, anyhow::Error> {
-    if path.ends_with(".json") {
-        bail!("JSON GTFS is not supported");
-    }
     let feed = if let Ok(feed) = gtfs_structures::Gtfs::from_path(path.to_str().unwrap()) {
         feed
     } else {
