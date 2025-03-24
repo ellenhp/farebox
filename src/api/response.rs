@@ -4,13 +4,13 @@ use super::FareboxItinerary;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum ResponseStatus {
-    #[serde(alias = "ok")]
+    #[serde(rename = "ok")]
     Ok,
-    #[serde(alias = "no_route_found")]
+    #[serde(rename = "no_route_found")]
     NoRouteFound,
-    #[serde(alias = "too_early")]
+    #[serde(rename = "too_early")]
     TooEarly,
-    #[serde(alias = "too_late")]
+    #[serde(rename = "too_late")]
     TooLate,
 }
 

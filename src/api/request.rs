@@ -7,9 +7,9 @@ use super::LatLng;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum TransferMode {
-    #[serde(alias = "walking")]
+    #[serde(rename = "walking")]
     Walking,
-    #[serde(alias = "cycling")]
+    #[serde(rename = "cycling")]
     Cycling,
 }
 
