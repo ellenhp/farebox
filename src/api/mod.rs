@@ -14,7 +14,7 @@ pub struct LatLng {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum FareboxLeg {
-    #[serde(alias = "transit")]
+    #[serde(rename = "transit")]
     Transit {
         #[serde(
             serialize_with = "time::serde::timestamp::milliseconds::serialize",
@@ -33,7 +33,7 @@ pub enum FareboxLeg {
         transit_route: Option<String>,
         transit_agency: Option<String>,
     },
-    #[serde(alias = "transfer")]
+    #[serde(rename = "transfer")]
     Transfer {
         #[serde(
             serialize_with = "time::serde::timestamp::milliseconds::serialize",
