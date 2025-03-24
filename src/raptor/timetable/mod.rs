@@ -183,7 +183,7 @@ pub struct StopRoute {
 
 impl<'a> StopRoute {
     #[inline]
-    pub fn route(&'a self, timetable: &'a dyn Timetable<'a>) -> &Route {
+    pub fn route(&'a self, timetable: &'a dyn Timetable<'a>) -> &'a Route {
         &timetable.routes()[self.route_index]
     }
 
