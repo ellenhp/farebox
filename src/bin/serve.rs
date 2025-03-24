@@ -41,6 +41,8 @@ struct ServeArgs {
     base_path: String,
     #[arg(short, long)]
     valhalla_endpoint: Option<String>,
+    #[arg(short, long)]
+    port: Option<u16>,
 }
 
 #[launch]
@@ -52,5 +54,8 @@ fn rocket() -> _ {
         args.valhalla_endpoint,
     );
 
-    rocket::build().manage(router).mount("/", routes![plan])
+    rocket::build()
+        .manage(router)
+        .configure(rocket::Config::figment().merge(("port", args.port.unwrap_or(8000))))
+        .mount("/", routes![plan])
 }
