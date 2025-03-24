@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashMap, marker::PhantomData, time::Instant};
+use std::{cell::RefCell, collections::HashMap, marker::PhantomData};
 
 use log::debug;
 use reqwest::Client;
@@ -86,8 +86,6 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
             max_candidate_stops_each_side,
             max_distance_meters,
         );
-
-        dbg!(&start_stops, &target_stops);
 
         let target_costs: Vec<(usize, u32)> =
             if let Some(valhalla_endpoint) = &self.valhalla_endpoint {
@@ -506,10 +504,8 @@ where
     }
 
     async fn init(&mut self, time: Time, start_location: LatLng, starts: &[&'a Stop]) {
-        let start_time = Instant::now();
         self.best_times_per_round
             .push(vec![None; self.timetable.stop_count()]);
-        dbg!(Instant::now().duration_since(start_time), starts.len());
 
         let start_costs: HashMap<usize, u32> =
             if let Some(valhalla_endpoint) = &self.valhalla_endpoint {
@@ -573,7 +569,6 @@ where
                 );
             }
         }
-        dbg!(Instant::now().duration_since(start_time));
     }
 
     fn earliest_trip_from(&self, route_stop: &RouteStop, not_before: &Time) -> Option<Trip> {
@@ -755,9 +750,6 @@ where
                     }
                 }
             } else {
-                if route.first_route_trip > marked_routes[route.id()].trip_index {
-                    dbg!(route.first_route_trip, marked_routes[route.id()].trip_index);
-                }
                 for trip in route.route_trips(self.timetable)
                     [0..(marked_routes[route.id()].trip_index - route.first_route_trip)]
                     .iter()
@@ -781,13 +773,11 @@ where
 
     pub async fn route(&mut self) {
         self.round = 0;
-        let start = Instant::now();
         let mut marked_stops = true;
         let mut round_bound = self.max_transfers;
         while marked_stops {
             if let Some(round_bound) = round_bound {
                 if self.round >= round_bound as u32 {
-                    dbg!(self.round, round_bound);
                     break;
                 }
             }
@@ -802,7 +792,5 @@ where
             }
             self.round += 1;
         }
-        dbg!(Instant::now().duration_since(start));
-        dbg!(self.round);
     }
 }
