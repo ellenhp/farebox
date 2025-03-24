@@ -4,8 +4,13 @@ use log::debug;
 use reqwest::Client;
 use s2::latlng::LatLng;
 use serde::Serialize;
+use time::OffsetDateTime;
 
 use crate::{
+    api::{
+        response::{FareboxResponse, ResponseStatus},
+        FareboxItinerary, FareboxLeg,
+    },
     raptor::{
         geomath::{EARTH_RADIUS_APPROX, FAKE_WALK_SPEED_SECONDS_PER_METER},
         timetable::TripStopTime,
@@ -70,7 +75,7 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
         max_candidate_stops_each_side: Option<usize>,
         max_transfers: Option<usize>,
         max_transfer_delta: Option<usize>,
-    ) -> Option<Vec<(Step, usize)>> {
+    ) -> FareboxResponse {
         let start_stops = self.nearest_stops(
             start_location,
             max_candidate_stops_each_side,
@@ -166,10 +171,6 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
             .await;
         context.route().await;
 
-        for target in target_stops {
-            dbg!(&context.best_times_global[target.id()]);
-        }
-
         // TODO: Redo all of this once `seconds_since_service_day_start` is private.
         let (best_itinerary, last_leg_cost) = if let Some(itinerary) = target_costs
             .iter()
@@ -182,7 +183,10 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
         {
             itinerary
         } else {
-            return None;
+            return FareboxResponse {
+                status: ResponseStatus::NoRouteFound,
+                itineraries: vec![],
+            };
         };
 
         let mut steps = vec![];
@@ -212,13 +216,11 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
             let to = if let InternalStepLocation::Stop(stop) = step.to {
                 stop
             } else {
-                dbg!(step);
                 panic!();
             };
             let from = if let InternalStepLocation::Stop(stop) = step.from {
                 stop
             } else {
-                dbg!(step);
                 panic!();
             };
             let to_location = to.location();
@@ -263,7 +265,73 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
             ));
             step_cursor = step.previous_step;
         }
-        Some(steps)
+        let end_time = if let Some((Step::End(end), _)) = steps.first() {
+            end.end_epoch_seconds
+        } else {
+            panic!("First step is not a Begin step.");
+        };
+        let legs = steps
+            .iter()
+            .rev()
+            .filter_map(|(step, _)| match step {
+                Step::Trip(trip) => Some(FareboxLeg::Transit {
+                    start_time: OffsetDateTime::from_unix_timestamp(
+                        trip.departure_epoch_seconds as i64,
+                    )
+                    .expect("Invalid Unix timestamp"),
+                    end_time: OffsetDateTime::from_unix_timestamp(
+                        trip.arrival_epoch_seconds as i64,
+                    )
+                    .expect("Invalid Unix timestamp"),
+                    start_location: crate::api::LatLng {
+                        lat: trip.departure_stop_latlng[0],
+                        lon: trip.departure_stop_latlng[1],
+                        stop: trip.departure_stop.clone(),
+                    },
+                    end_location: crate::api::LatLng {
+                        lat: trip.arrival_stop_latlng[0],
+                        lon: trip.arrival_stop_latlng[1],
+                        stop: trip.arrival_stop.clone(),
+                    },
+                    transit_route: trip.on_route.clone(),
+                    transit_agency: trip.agency.clone(),
+                    route_shape: None,
+                }),
+                Step::Transfer(transfer) => Some(FareboxLeg::Transfer {
+                    start_time: OffsetDateTime::from_unix_timestamp(
+                        transfer.departure_epoch_seconds as i64,
+                    )
+                    .expect("Invalid Unix timestamp"),
+                    end_time: OffsetDateTime::from_unix_timestamp(
+                        transfer.arrival_epoch_seconds as i64,
+                    )
+                    .expect("Invalid Unix timestamp"),
+                    start_location: crate::api::LatLng {
+                        lat: transfer.from_stop_latlng[0],
+                        lon: transfer.from_stop_latlng[1],
+                        stop: transfer.from_stop.clone(),
+                    },
+                    end_location: crate::api::LatLng {
+                        lat: transfer.to_stop_latlng[0],
+                        lon: transfer.to_stop_latlng[1],
+                        stop: transfer.to_stop.clone(),
+                    },
+                }),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let itinerary = FareboxItinerary {
+            start_time:
+                OffsetDateTime::from_unix_timestamp(route_start_time.epoch_seconds() as i64)
+                    .expect("Invalid Unix timestamp"),
+            end_time: OffsetDateTime::from_unix_timestamp(end_time as i64)
+                .expect("Invalid Unix timestamp"),
+            legs,
+        };
+        FareboxResponse {
+            status: ResponseStatus::Ok,
+            itineraries: vec![itinerary],
+        }
     }
 }
 

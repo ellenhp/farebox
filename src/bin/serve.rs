@@ -1,95 +1,38 @@
 use clap::Parser;
 use farebox::{
+    api::{request::FareboxRequest, response::FareboxResponse},
     raptor::timetable::{mmap::MmapTimetable, Time},
     route::Router,
 };
-use reqwest::StatusCode;
-use rocket::State;
-use serde::Deserialize;
+use rocket::{serde::json::Json, State};
+use s2::latlng::LatLng;
 
 #[macro_use]
 extern crate rocket;
 
-#[derive(Deserialize, Clone)]
-struct LatLng {
-    lat: f64,
-    lng: f64,
-}
+#[post("/v1/plan", data = "<request>")]
+async fn plan(
+    request: Json<FareboxRequest>,
+    router: &State<Router<'_, MmapTimetable<'_>>>,
+) -> Json<FareboxResponse> {
+    let from = LatLng::from_degrees(request.0.from.lat, request.0.from.lon);
+    let to = LatLng::from_degrees(request.0.to.lat, request.0.to.lon);
 
-#[derive(Deserialize)]
-struct AirmailResponse {
-    features: Vec<LatLng>,
-}
+    let max_transfers = usize::min(10, request.0.max_transfers.0);
 
-fn parse_lat_lng(text: &str) -> Option<LatLng> {
-    let parts: Vec<String> = text.split(",").map(|s| s.to_string()).collect();
-    if parts.len() != 2 {
-        return None;
-    }
-    let lat = if let Ok(lat) = parts[0].parse() {
-        lat
-    } else {
-        return None;
-    };
-    let lng = if let Ok(lng) = parts[1].parse() {
-        lng
-    } else {
-        return None;
-    };
-    return Some(LatLng { lat, lng });
-}
-
-async fn geocode(query: &str) -> Option<LatLng> {
-    let params = vec![("q", query)];
-    if let Ok(response) = reqwest::get(
-        reqwest::Url::parse_with_params("https://api2.airmail.rs/search", &params)
-            .expect("Failed to generate URL"),
-    )
-    .await
-    {
-        if response.status() != StatusCode::OK {
-            return None;
-        }
-        let response: AirmailResponse =
-            serde_json::from_str(&response.text().await.unwrap()).unwrap();
-        response.features.first().cloned()
-    } else {
-        return None;
-    }
-}
-
-async fn parse_place(text: &str) -> Option<LatLng> {
-    if let Some(latlng) = parse_lat_lng(text) {
-        return Some(latlng);
-    } else if let Some(latlng) = geocode(text).await {
-        return Some(latlng);
-    }
-    return None;
-}
-
-#[get("/plan/<from>/<to>")]
-async fn index(from: &str, to: &str, router: &State<Router<'_, MmapTimetable<'_>>>) -> String {
-    let from = parse_place(from).await.unwrap();
-    let to = parse_place(to).await.unwrap();
-    let from = s2::latlng::LatLng::from_degrees(from.lat, from.lng);
-    let to = s2::latlng::LatLng::from_degrees(to.lat, to.lng);
-
-    if let Some(route) = router
-        .route(
-            Time::now(),
-            from,
-            to,
-            Some(5000f64),
-            Some(20),
-            Some(10),
-            Some(2),
-        )
-        .await
-    {
-        return serde_json::to_string_pretty(&route).unwrap();
-    };
-
-    return "[]".to_string();
+    return Json(
+        router
+            .route(
+                Time::from_epoch_seconds(request.0.start_at.unix_timestamp() as u32),
+                from,
+                to,
+                Some(5000f64),
+                Some(20),
+                Some(max_transfers),
+                Some(2),
+            )
+            .await,
+    );
 }
 
 #[derive(Parser)]
@@ -109,5 +52,5 @@ fn rocket() -> _ {
         args.valhalla_endpoint,
     );
 
-    rocket::build().manage(router).mount("/", routes![index])
+    rocket::build().manage(router).mount("/", routes![plan])
 }
