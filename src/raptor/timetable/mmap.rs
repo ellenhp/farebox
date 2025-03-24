@@ -58,12 +58,12 @@ pub struct MmapTimetable<'a> {
 
 impl<'a> Timetable<'a> for MmapTimetable<'a> {
     #[inline]
-    fn route(&'a self, route_id: usize) -> &Route {
+    fn route(&'a self, route_id: usize) -> &'a Route {
         &self.routes()[route_id as usize]
     }
 
     #[inline]
-    fn stop(&'a self, stop_id: usize) -> &Stop {
+    fn stop(&'a self, stop_id: usize) -> &'a Stop {
         &self.stops()[stop_id as usize]
     }
 
