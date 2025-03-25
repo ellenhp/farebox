@@ -1,5 +1,6 @@
 use std::{cell::RefCell, collections::HashMap, marker::PhantomData};
 
+use geo_types::{Coord, LineString};
 use log::debug;
 use reqwest::Client;
 use s2::latlng::LatLng;
@@ -237,6 +238,9 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
                 } else {
                     let to_location = to.location();
                     let from_location = from.location();
+
+                    let shape = self.clip_shape(step);
+
                     Step::Trip(TripStep {
                         on_route: step
                             .trip
@@ -256,7 +260,7 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
                         arrival_stop: Some(to.metadata(&self.timetable).name.clone()),
                         arrival_stop_latlng: [to_location.lat.deg(), to_location.lng.deg()],
                         arrival_epoch_seconds: step.arrival.epoch_seconds() as u64,
-                        shape: "TODO".into(),
+                        shape,
                     })
                 },
                 step_cursor,
@@ -293,7 +297,7 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
                     },
                     transit_route: trip.on_route.clone(),
                     transit_agency: trip.agency.clone(),
-                    route_shape: None,
+                    route_shape: trip.shape.clone(),
                 }),
                 Step::Transfer(transfer) => Some(FareboxLeg::Transfer {
                     start_time: OffsetDateTime::from_unix_timestamp(
@@ -330,6 +334,56 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
             status: ResponseStatus::Ok,
             itineraries: vec![itinerary],
         }
+    }
+
+    fn clip_shape(&'a self, step: &InternalStep) -> Option<String> {
+        if let Some(route) = &step.route {
+            if let Some(shape) = self.timetable.route_shape(route) {
+                let departure_stop_distance = if let InternalStepLocation::Stop(stop) = step.from {
+                    route
+                        .route_stops(&self.timetable)
+                        .iter()
+                        .filter(|route_stop| route_stop.stop(&self.timetable).id() == stop.id())
+                        .next()
+                        .map(|route_stop| route_stop.distance_along_route())?
+                } else {
+                    return None;
+                };
+                let arrival_stop_distance = if let InternalStepLocation::Stop(stop) = step.to {
+                    route
+                        .route_stops(&self.timetable)
+                        .iter()
+                        .filter(|route_stop| route_stop.stop(&self.timetable).id() == stop.id())
+                        .next()
+                        .map(|route_stop| route_stop.distance_along_route())?
+                } else {
+                    return None;
+                };
+                let coords = shape
+                    .iter()
+                    .skip_while(|coord| {
+                        coord
+                            .distance_along_shape()
+                            .map(|dist| dist.is_nan() || dist < departure_stop_distance)
+                            .unwrap_or(true)
+                    })
+                    .take_while(|coord| {
+                        coord
+                            .distance_along_shape()
+                            .map(|dist| dist.is_nan() || dist < arrival_stop_distance)
+                            .unwrap_or(true)
+                    })
+                    .map(|coord| Coord {
+                        x: coord.lon(),
+                        y: coord.lat(),
+                    })
+                    .collect::<Vec<_>>();
+
+                let line_string = LineString::new(coords);
+                return polyline::encode_coordinates(line_string, 5).ok();
+            }
+        };
+        None
     }
 }
 
@@ -369,7 +423,7 @@ pub struct TripStep {
     pub arrival_stop: Option<String>,
     pub arrival_stop_latlng: [f64; 2],
     pub arrival_epoch_seconds: u64,
-    pub shape: String,
+    pub shape: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

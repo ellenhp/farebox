@@ -668,9 +668,11 @@ dependencies = [
  "env_logger",
  "flatdata",
  "futures",
+ "geo-types",
  "gtfs-structures",
  "log",
  "memmap2 0.9.5",
+ "polyline",
  "rayon",
  "redb",
  "reqwest",
@@ -882,6 +884,17 @@ checksum = "85649ca51fd72272d7821adaf274ad91c288277713d9c18820d8499a7ff69e9a"
 dependencies = [
  "typenum",
  "version_check",
+]
+
+[[package]]
+name = "geo-types"
+version = "0.7.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62ddb1950450d67efee2bbc5e429c68d052a822de3aad010d28b351fbb705224"
+dependencies = [
+ "approx 0.5.1",
+ "num-traits",
+ "serde",
 ]
 
 [[package]]
@@ -1753,6 +1766,15 @@ name = "pkg-config"
 version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "953ec861398dccce10c670dfeaf3ec4911ca479e9c02154b3a215178c5f566f2"
+
+[[package]]
+name = "polyline"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f19cbf429afe5a5186d4c6ca7b246b446b2d18919eefdddb521792d57c874f67"
+dependencies = [
+ "geo-types",
+]
 
 [[package]]
 name = "powerfmt"
