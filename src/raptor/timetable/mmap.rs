@@ -9,7 +9,7 @@ use std::{
 
 use anyhow::{Error, Ok};
 use bytemuck::{cast_slice_mut, checked::cast_slice};
-use log::{debug, warn};
+use log::{debug, info, warn};
 use memmap2::{Mmap, MmapMut, MmapOptions};
 use redb::Database;
 use reqwest::Client;
@@ -25,7 +25,7 @@ use crate::{
 
 use super::{
     in_memory::InMemoryTimetableBuilder, Route, RouteStop, Stop, StopRoute, Timetable, Transfer,
-    Trip, TripMetadata, TripStopTime, STOP_METADATA_TABLE, TRIP_METADATA_TABLE,
+    Trip, TripMetadata, TripStopTime, ROUTE_SHAPE_TABLE, STOP_METADATA_TABLE, TRIP_METADATA_TABLE,
 };
 
 #[allow(unused)]
@@ -158,6 +158,21 @@ impl<'a> Timetable<'a> for MmapTimetable<'a> {
             .expect("DB error")
             .expect("Missing metadata for trip");
         rmp_serde::from_slice(bytes.value()).expect("Deserialization failed")
+    }
+
+    fn route_shape(&'a self, route: &Route) -> Option<String> {
+        let table = self
+            .metadata_db
+            .begin_read()
+            .expect("Read failed")
+            .open_table(ROUTE_SHAPE_TABLE)
+            .expect("Failed to open table");
+
+        if let Some(bytes) = table.get(route.route_index as u64).expect("DB error") {
+            rmp_serde::from_slice(bytes.value()).expect("Deserialization failed")
+        } else {
+            None
+        }
     }
 }
 
@@ -401,6 +416,18 @@ impl<'a> MmapTimetable<'a> {
                 }
                 write.commit()?;
             }
+            {
+                let write = metadata_db.begin_write()?;
+                {
+                    let mut table = write.open_table(ROUTE_SHAPE_TABLE)?;
+                    for route in in_memory_timetable.routes() {
+                        let bytes = rmp_serde::to_vec(&in_memory_timetable.route_shape(route))?;
+                        table.insert(route.route_index as u64, bytes.as_slice())?;
+                    }
+                }
+                write.commit()?;
+            }
+            info!("Done writing timetable");
         }
         MmapTimetable::open(base_path)
     }
@@ -568,6 +595,21 @@ impl<'a> MmapTimetable<'a> {
                             table.insert((cursor + trip.trip_index) as u64, bytes.as_slice())?;
                         }
                         cursor += tt.route_trips().len();
+                    }
+                }
+                write.commit()?;
+            }
+            {
+                let write = metadata_db.begin_write()?;
+                {
+                    let mut table = write.open_table(ROUTE_SHAPE_TABLE)?;
+                    let mut cursor = 0usize;
+                    for tt in timetables {
+                        for route in tt.routes() {
+                            let bytes = rmp_serde::to_vec(&tt.route_shape(route))?;
+                            table.insert((cursor + route.route_index) as u64, bytes.as_slice())?;
+                        }
+                        cursor += tt.routes().len();
                     }
                 }
                 write.commit()?;

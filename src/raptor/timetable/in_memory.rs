@@ -3,8 +3,10 @@ use std::{
     u32,
 };
 
+use anyhow::bail;
 use chrono::{Days, Local, TimeDelta, TimeZone};
 use chrono_tz::Tz;
+use geo_types::{Coord, LineString};
 use gtfs_structures::Gtfs;
 use log::{debug, warn};
 use rstar::RTree;
@@ -30,6 +32,7 @@ pub(crate) struct InMemoryTimetable {
     transfers: Vec<Transfer>,
     trip_metadata_map: HashMap<Trip, TripMetadata>,
     stop_metadata_map: HashMap<Stop, gtfs_structures::Stop>,
+    route_shapes: HashMap<Route, Option<String>>,
 }
 
 impl<'a> Timetable<'a> for InMemoryTimetable {
@@ -108,6 +111,10 @@ impl<'a> Timetable<'a> for InMemoryTimetable {
     fn nearest_stops(&'a self, _lat: f64, _lng: f64, _n: usize) -> Vec<(&'a Stop, f64)> {
         Vec::new()
     }
+
+    fn route_shape(&'a self, route: &Route) -> Option<String> {
+        self.route_shapes[route].clone()
+    }
 }
 
 impl<'a> InMemoryTimetable {
@@ -123,6 +130,7 @@ impl<'a> InMemoryTimetable {
             transfers: vec![],
             trip_metadata_map: HashMap::new(),
             stop_metadata_map: HashMap::new(),
+            route_shapes: HashMap::new(),
         }
     }
 }
@@ -171,7 +179,8 @@ impl<'a> InMemoryTimetableBuilder {
             self.next_stop_id += 1;
         }
 
-        let mut route_to_route_id: BTreeMap<Vec<usize>, usize> = BTreeMap::new();
+        let mut route_to_route_id: BTreeMap<(Vec<usize>, String), usize> = BTreeMap::new();
+        let mut route_shapes: BTreeMap<usize, Option<String>> = BTreeMap::new();
         let mut route_id_to_trip_list: BTreeMap<usize, Vec<(u16, String)>> = BTreeMap::new();
         let mut stop_id_to_route_list: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
         for (gtfs_trip_id, trip) in &gtfs.trips {
@@ -180,12 +189,38 @@ impl<'a> InMemoryTimetableBuilder {
                 .iter()
                 .map(|time| *stop_to_stop_id_map.get(&time.stop.id).unwrap())
                 .collect();
-            let route_id = if let Some(id) = route_to_route_id.get(&trip_stops) {
+            let route_id = if let Some(id) =
+                route_to_route_id.get(&(trip_stops.clone(), trip.route_id.clone()))
+            {
                 *id
             } else {
                 let id = self.next_route_id;
-                route_to_route_id.insert(trip_stops.clone(), id);
+                route_to_route_id.insert((trip_stops.clone(), trip.route_id.clone()), id);
                 route_id_to_trip_list.insert(id, vec![]);
+
+                let polyline = if let Some(shape_id) = &trip.shape_id {
+                    let coords: Vec<Coord> = if let Ok(coords) = gtfs.get_shape(&shape_id) {
+                        coords
+                            .iter()
+                            .map(|point| Coord {
+                                x: point.longitude,
+                                y: point.latitude,
+                            })
+                            .collect()
+                    } else {
+                        warn!("Could not look up shape {shape_id}");
+                        vec![]
+                    };
+                    let line_string = LineString::new(coords);
+                    if let Ok(polyline) = polyline::encode_coordinates(line_string, 5) {
+                        Some(polyline)
+                    } else {
+                        bail!("Could not encode polyline");
+                    }
+                } else {
+                    None
+                };
+                route_shapes.insert(id, polyline);
                 self.next_route_id += 1;
                 id
             };
@@ -221,7 +256,7 @@ impl<'a> InMemoryTimetableBuilder {
         // Handy to have this sorted already. Maps internal route ID to a sequence of internal stop IDs.
         let route_id_to_route_map: BTreeMap<usize, Vec<usize>> = route_to_route_id
             .iter()
-            .map(|(k, v)| (v.clone() as usize, k.clone()))
+            .map(|((k, _), v)| (v.clone() as usize, k.clone()))
             .collect();
 
         assert_eq!(route_to_route_id.len(), route_id_to_route_map.len());
@@ -235,8 +270,10 @@ impl<'a> InMemoryTimetableBuilder {
                     first_route_stop: self.next_route_stop_id,
                     first_route_trip: self.next_route_trip_id,
                 };
+                self.timetable
+                    .route_shapes
+                    .insert(route, route_shapes[route_id].clone());
                 self.timetable.routes.push(route);
-                // TODO: Feed ID.
 
                 for (stop_seq, stop_id) in route_stop_list.iter().enumerate() {
                     self.timetable.route_stops.push(RouteStop {

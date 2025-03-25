@@ -256,7 +256,11 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
                         arrival_stop: Some(to.metadata(&self.timetable).name.clone()),
                         arrival_stop_latlng: [to_location.lat.deg(), to_location.lng.deg()],
                         arrival_epoch_seconds: step.arrival.epoch_seconds() as u64,
-                        shape: "TODO".into(),
+                        shape: step
+                            .route
+                            .iter()
+                            .filter_map(|route| context.timetable.route_shape(route))
+                            .next(),
                     })
                 },
                 step_cursor,
@@ -293,7 +297,7 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
                     },
                     transit_route: trip.on_route.clone(),
                     transit_agency: trip.agency.clone(),
-                    route_shape: None,
+                    route_shape: trip.shape.clone(),
                 }),
                 Step::Transfer(transfer) => Some(FareboxLeg::Transfer {
                     start_time: OffsetDateTime::from_unix_timestamp(
@@ -369,7 +373,7 @@ pub struct TripStep {
     pub arrival_stop: Option<String>,
     pub arrival_stop_latlng: [f64; 2],
     pub arrival_epoch_seconds: u64,
-    pub shape: String,
+    pub shape: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -17,6 +17,7 @@ use super::geomath::IndexedStop;
 static DAY_SECONDS: u32 = 86_400;
 const STOP_METADATA_TABLE: TableDefinition<u64, &[u8]> = TableDefinition::new("stop_metadata");
 const TRIP_METADATA_TABLE: TableDefinition<u64, &[u8]> = TableDefinition::new("trip_metadata");
+const ROUTE_SHAPE_TABLE: TableDefinition<u64, &[u8]> = TableDefinition::new("route_shapes");
 
 pub trait Timetable<'a> {
     fn route(&'a self, route_id: usize) -> &'a Route;
@@ -37,6 +38,8 @@ pub trait Timetable<'a> {
 
     fn stop_metadata(&'a self, stop: &Stop) -> gtfs_structures::Stop;
     fn trip_metadata(&'a self, trip: &Trip) -> TripMetadata;
+
+    fn route_shape(&'a self, route: &Route) -> Option<String>;
 }
 
 #[derive(
