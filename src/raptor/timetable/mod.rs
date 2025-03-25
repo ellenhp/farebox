@@ -39,7 +39,7 @@ pub trait Timetable<'a> {
     fn stop_metadata(&'a self, stop: &Stop) -> gtfs_structures::Stop;
     fn trip_metadata(&'a self, trip: &Trip) -> TripMetadata;
 
-    fn route_shape(&'a self, route: &Route) -> Option<String>;
+    fn route_shape(&'a self, route: &Route) -> Option<Vec<ShapeCoordinate>>;
 }
 
 #[derive(
@@ -77,12 +77,13 @@ impl<'a> Stop {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Copy, Pod, Zeroable)]
+#[derive(Debug, Clone, PartialEq, PartialOrd, Copy, Pod, Zeroable)]
 #[repr(C)]
 pub struct RouteStop {
     route_index: usize,
     stop_index: usize,
-    stop_seq: usize,
+    stop_seq: u32,
+    distance_along_route: f32,
 }
 
 impl<'a> RouteStop {
@@ -93,7 +94,7 @@ impl<'a> RouteStop {
 
     #[inline]
     pub fn stop_seq(&self) -> usize {
-        self.stop_seq
+        self.stop_seq as usize
     }
 
     #[inline]
@@ -104,6 +105,11 @@ impl<'a> RouteStop {
     #[inline]
     pub fn stop(&self, timetable: &'a dyn Timetable<'a>) -> &'a Stop {
         &timetable.stops()[self.stop_index]
+    }
+
+    #[inline]
+    pub fn distance_along_route(&self) -> f32 {
+        self.distance_along_route
     }
 }
 
@@ -329,6 +335,27 @@ impl Time {
         Time {
             epoch_seconds: UNIX_EPOCH.elapsed().unwrap().as_secs() as u32,
         }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShapeCoordinate {
+    lat: f64,
+    lon: f64,
+    distance_along_shape: Option<f32>,
+}
+
+impl ShapeCoordinate {
+    pub fn lat(&self) -> f64 {
+        self.lat
+    }
+
+    pub fn lon(&self) -> f64 {
+        self.lon
+    }
+
+    pub fn distance_along_shape(&self) -> Option<f32> {
+        self.distance_along_shape
     }
 }
 

@@ -24,8 +24,9 @@ use crate::{
 };
 
 use super::{
-    in_memory::InMemoryTimetableBuilder, Route, RouteStop, Stop, StopRoute, Timetable, Transfer,
-    Trip, TripMetadata, TripStopTime, ROUTE_SHAPE_TABLE, STOP_METADATA_TABLE, TRIP_METADATA_TABLE,
+    in_memory::InMemoryTimetableBuilder, Route, RouteStop, ShapeCoordinate, Stop, StopRoute,
+    Timetable, Transfer, Trip, TripMetadata, TripStopTime, ROUTE_SHAPE_TABLE, STOP_METADATA_TABLE,
+    TRIP_METADATA_TABLE,
 };
 
 #[allow(unused)]
@@ -160,7 +161,7 @@ impl<'a> Timetable<'a> for MmapTimetable<'a> {
         rmp_serde::from_slice(bytes.value()).expect("Deserialization failed")
     }
 
-    fn route_shape(&'a self, route: &Route) -> Option<String> {
+    fn route_shape(&'a self, route: &Route) -> Option<Vec<ShapeCoordinate>> {
         let table = self
             .metadata_db
             .begin_read()
