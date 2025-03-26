@@ -323,6 +323,16 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
             })
             .collect::<Vec<_>>();
         let itinerary = FareboxItinerary {
+            start_location: crate::api::LatLng {
+                lat: start_location.lat.deg(),
+                lon: start_location.lng.deg(),
+                stop: None,
+            },
+            end_location: crate::api::LatLng {
+                lat: target_location.lat.deg(),
+                lon: target_location.lng.deg(),
+                stop: None,
+            },
             start_time:
                 OffsetDateTime::from_unix_timestamp(route_start_time.epoch_seconds() as i64)
                     .expect("Invalid Unix timestamp"),
