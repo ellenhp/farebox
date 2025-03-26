@@ -746,12 +746,19 @@ where
                     // TODO: local pruning, target pruning
                     let departure_trip_stop_time =
                         &current_trip.stop_times(self.timetable)[departure_stop_seq];
-                    let previous_step = self.best_times_global
+                    let previous_step = if let Some(previous_step) = self.best_times_global
                         [departure.route_stop(self.timetable).id()]
                     .as_ref()
-                    .unwrap()
-                    .last_step
-                    .clone();
+                    .map(|step| step.last_step.clone())
+                    {
+                        previous_step
+                    } else {
+                        log::error!(
+                            "No best time for stop {:?}",
+                            departure.route_stop(self.timetable)
+                        );
+                        continue;
+                    };
                     if self.maybe_update_arrival_time_and_route(
                         self.round,
                         &InternalStepLocation::Stop(current_trip_start.stop(self.timetable)),
