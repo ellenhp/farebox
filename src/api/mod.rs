@@ -52,6 +52,8 @@ pub enum FareboxLeg {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct FareboxItinerary {
+    pub start_location: LatLng,
+    pub end_location: LatLng,
     #[serde(
         serialize_with = "time::serde::timestamp::milliseconds::serialize",
         deserialize_with = "time::serde::timestamp::milliseconds::deserialize"
