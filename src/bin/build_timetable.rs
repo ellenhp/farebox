@@ -7,6 +7,7 @@ use std::{
 use anyhow::bail;
 use clap::Parser;
 use farebox::raptor::timetable::{in_memory::InMemoryTimetableBuilder, mmap::MmapTimetable};
+use gtfs_structures::GtfsReader;
 use log::debug;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
@@ -28,7 +29,7 @@ fn process_gtfs<'a>(
     path: &PathBuf,
     base_path: &PathBuf,
 ) -> Result<MmapTimetable<'a>, anyhow::Error> {
-    let feed = if let Ok(feed) = gtfs_structures::Gtfs::from_path(path.to_str().unwrap()) {
+    let feed = if let Ok(feed) = GtfsReader::default().read_from_path(path.to_str().unwrap()) {
         feed
     } else {
         bail!(format!("Failed to load feed: {:?}", path));

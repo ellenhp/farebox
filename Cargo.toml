@@ -14,7 +14,7 @@ chrono = "0.4.24"
 chrono-tz = "0.10.0"
 clap = { version = "4.3.0", features = ["derive"] }
 env_logger = "0.10.0"
-gtfs-structures = "0.34.0"
+gtfs-structures = "0.43.0"
 log = "0.4.17"
 reqwest = "0.11.18"
 rstar = { version = "0.12.2", features = ["serde"] }
@@ -36,6 +36,7 @@ rayon = "1.10.0"
 time = { version = "0.3.41", features = ["serde"] }
 polyline = "0.11.0"
 geo-types = "0.7.16"
+geo = "0.30.0"
 
 [build-dependencies]
 flatdata = "0.5.3"

@@ -1,6 +1,7 @@
 use std::{cell::RefCell, collections::HashMap, marker::PhantomData};
 
-use geo_types::{Coord, LineString};
+use geo::ClosestPoint;
+use geo_types::{Coord, Line, LineString, Point};
 use log::debug;
 use reqwest::Client;
 use s2::latlng::LatLng;
@@ -201,7 +202,7 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
             let from_location = from.location();
             steps.push((
                 Step::End(EndStep {
-                    last_stop: Some(from.metadata(&self.timetable).name.clone()),
+                    last_stop: from.metadata(&self.timetable).name.clone(),
                     last_stop_latlng: [from_location.lat.deg(), from_location.lng.deg()],
                     last_stop_departure_epoch_seconds: step.arrival.epoch_seconds() as u64,
                     end_latlng: [to.lat.deg(), to.lng.deg()],
@@ -228,9 +229,9 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
             steps.push((
                 if step.route.is_none() {
                     Step::Transfer(TransferStep {
-                        from_stop: Some(from.metadata(&self.timetable).name.clone()),
+                        from_stop: from.metadata(&self.timetable).name.clone(),
                         from_stop_latlng: [from_location.lat.deg(), from_location.lng.deg()],
-                        to_stop: Some(to.metadata(&self.timetable).name.clone()),
+                        to_stop: to.metadata(&self.timetable).name.clone(),
                         to_stop_latlng: [to_location.lat.deg(), to_location.lng.deg()],
                         departure_epoch_seconds: step.departure.epoch_seconds() as u64,
                         arrival_epoch_seconds: step.arrival.epoch_seconds() as u64,
@@ -254,10 +255,10 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
                             .metadata(&self.timetable)
                             .agency_name
                             .clone(),
-                        departure_stop: Some(from.metadata(&self.timetable).name.clone()),
+                        departure_stop: from.metadata(&self.timetable).name.clone(),
                         departure_stop_latlng: [from_location.lat.deg(), from_location.lng.deg()],
                         departure_epoch_seconds: step.departure.epoch_seconds() as u64,
-                        arrival_stop: Some(to.metadata(&self.timetable).name.clone()),
+                        arrival_stop: to.metadata(&self.timetable).name.clone(),
                         arrival_stop_latlng: [to_location.lat.deg(), to_location.lng.deg()],
                         arrival_epoch_seconds: step.arrival.epoch_seconds() as u64,
                         shape,
@@ -369,7 +370,7 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
                 } else {
                     return None;
                 };
-                let coords = shape
+                let mut coords = shape
                     .iter()
                     .skip_while(|coord| {
                         coord
@@ -389,11 +390,62 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
                     })
                     .collect::<Vec<_>>();
 
+                if coords.is_empty() {
+                    let points: Vec<Coord> = shape
+                        .iter()
+                        .map(|coord| Coord {
+                            x: coord.lon(),
+                            y: coord.lat(),
+                        })
+                        .collect();
+                    let start =
+                        Point::new(step.from.latlng().lng.deg(), step.from.latlng().lat.deg());
+                    let end = Point::new(step.to.latlng().lng.deg(), step.to.latlng().lat.deg());
+                    if let (Some((start_idx, start_point)), Some((end_idx, end_point))) = (
+                        Self::closest_point(&start, &points),
+                        Self::closest_point(&end, &points),
+                    ) {
+                        coords = shape
+                            .iter()
+                            .skip(start_idx + 1)
+                            .take(end_idx - start_idx)
+                            .map(|coord| Coord {
+                                x: coord.lon(),
+                                y: coord.lat(),
+                            })
+                            .collect();
+                        coords.insert(0, start_point.0);
+                        coords.push(end_point.0);
+                    }
+                }
+
                 let line_string = LineString::new(coords);
                 return polyline::encode_coordinates(line_string, 5).ok();
             }
         };
         None
+    }
+
+    fn closest_point(target: &Point, points: &Vec<Coord>) -> Option<(usize, Point)> {
+        let (idx, closest) = points
+            .windows(2)
+            .map(|window| Line::new(window[0], window[1]))
+            .map(|line| line.closest_point(target))
+            .enumerate()
+            .reduce(|a, b| {
+                let closest = a.1.best_of_two(&b.1, *target);
+                if a.1 == closest {
+                    a
+                } else {
+                    b
+                }
+            })?;
+        let closest = match closest {
+            geo::Closest::Intersection(point) => point,
+            geo::Closest::SinglePoint(point) => point,
+            geo::Closest::Indeterminate => return None,
+        };
+        return Some((idx, closest));
     }
 }
 

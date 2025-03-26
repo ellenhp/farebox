@@ -379,11 +379,9 @@ impl<'a> InMemoryTimetableBuilder {
                     let metadata = TripMetadata {
                         agency_name: Some(agency_name),
                         headsign: gtfs.trips[gtfs_trip_id].clone().trip_headsign,
-                        route_name: Some(
-                            gtfs.routes[&gtfs.trips[gtfs_trip_id].route_id]
-                                .short_name
-                                .clone(),
-                        ),
+                        route_name: gtfs.routes[&gtfs.trips[gtfs_trip_id].route_id]
+                            .short_name
+                            .clone(),
                     };
                     self.timetable.trip_metadata_map.insert(trip, metadata);
 
