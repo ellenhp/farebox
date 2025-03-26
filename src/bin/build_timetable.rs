@@ -64,7 +64,7 @@ async fn timetable_from_feeds<'a>(
         .collect();
 
     // Combine all timetables into a single one
-    let timetable = MmapTimetable::concatenate(&timetables, base_path, valhalla_endpoint).await?;
+    let timetable = MmapTimetable::concatenate(&timetables, base_path, valhalla_endpoint).await;
     Ok(timetable)
 }
 
