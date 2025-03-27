@@ -809,11 +809,16 @@ where
 
             for transfer in self.timetable.transfers_from(stop_id) {
                 let transfer_to = transfer.to(self.timetable);
-                let last_step = self.best_times_global[stop.id()]
+                let last_step = if let Some(last_step) = self.best_times_global[stop.id()]
                     .as_ref()
-                    .unwrap()
-                    .last_step
-                    .clone();
+                    .map(|transfer| transfer.last_step)
+                    .clone()
+                {
+                    last_step
+                } else {
+                    log::error!("No transfer for stop {:?}", stop);
+                    continue;
+                };
                 // Don't transfer twice in a row.
                 // if self.step_log[last_step].route.is_none() {
                 //     continue;
