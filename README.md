@@ -58,7 +58,7 @@ cargo run --release --bin serve -- --base-path /path/to/timetable
 ## Architecture
 - **RAPTOR Algorithm**: Implements all pruning rules from the original paper for optimal performance.
 - **Memory Mapping**: Uses `memmap2` to load timetable data directly from disk, enabling fast access without RAM overhead.
-- **Designed for Modularity**: Decouples routing logic from geocoding/external services (e.g., uses Valhalla for transfer routes but allows custom integrations).
+- **Designed for Modularity**: Decouples routing logic from geocoding/external services (e.g., uses Valhalla for transfer routes, but otherwise allows easy integration into an existing stack).
 
 ## Performance Benchmarks
 | Metric                | Farebox          | OpenTripPlanner/MOTIS       |
