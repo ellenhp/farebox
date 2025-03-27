@@ -437,7 +437,7 @@ impl<'a> MmapTimetable<'a> {
         timetables: &[MmapTimetable<'b>],
         base_path: &PathBuf,
         valhalla_endpoint: Option<String>,
-    ) -> Result<MmapTimetable<'b>, Error> {
+    ) -> MmapTimetable<'b> {
         {
             let total_routes: usize = timetables.iter().map(|tt| tt.routes().len()).sum();
             let total_route_stops: usize = timetables.iter().map(|tt| tt.route_stops().len()).sum();
@@ -447,56 +447,76 @@ impl<'a> MmapTimetable<'a> {
             let total_trip_stop_times: usize =
                 timetables.iter().map(|tt| tt.trip_stop_times().len()).sum();
             {
-                let routes = File::create(base_path.join("routes"))?;
-                let route_stops = File::create(base_path.join("route_stops"))?;
-                let route_trips = File::create(base_path.join("route_trips"))?;
-                let stops = File::create(base_path.join("stops"))?;
-                let stop_routes = File::create(base_path.join("stop_routes"))?;
-                let trip_stop_times = File::create(base_path.join("trip_stop_times"))?;
+                let routes = File::create(base_path.join("routes")).unwrap();
+                let route_stops = File::create(base_path.join("route_stops")).unwrap();
+                let route_trips = File::create(base_path.join("route_trips")).unwrap();
+                let stops = File::create(base_path.join("stops")).unwrap();
+                let stop_routes = File::create(base_path.join("stop_routes")).unwrap();
+                let trip_stop_times = File::create(base_path.join("trip_stop_times")).unwrap();
 
-                routes.set_len((size_of::<Route>() * total_routes) as u64)?;
-                route_stops.set_len((size_of::<RouteStop>() * total_route_stops) as u64)?;
-                route_trips.set_len((size_of::<Trip>() * total_route_trips) as u64)?;
-                stops.set_len((size_of::<Stop>() * total_stops) as u64)?;
-                stop_routes.set_len((size_of::<StopRoute>() * total_stop_routes) as u64)?;
+                routes
+                    .set_len((size_of::<Route>() * total_routes) as u64)
+                    .unwrap();
+                route_stops
+                    .set_len((size_of::<RouteStop>() * total_route_stops) as u64)
+                    .unwrap();
+                route_trips
+                    .set_len((size_of::<Trip>() * total_route_trips) as u64)
+                    .unwrap();
+                stops
+                    .set_len((size_of::<Stop>() * total_stops) as u64)
+                    .unwrap();
+                stop_routes
+                    .set_len((size_of::<StopRoute>() * total_stop_routes) as u64)
+                    .unwrap();
                 trip_stop_times
-                    .set_len((size_of::<TripStopTime>() * total_trip_stop_times) as u64)?;
+                    .set_len((size_of::<TripStopTime>() * total_trip_stop_times) as u64)
+                    .unwrap();
             }
 
             let routes = File::options()
                 .write(true)
                 .read(true)
-                .open(base_path.join("routes"))?;
+                .open(base_path.join("routes"))
+                .unwrap();
             let route_stops = File::options()
                 .write(true)
                 .read(true)
-                .open(base_path.join("route_stops"))?;
+                .open(base_path.join("route_stops"))
+                .unwrap();
             let route_trips = File::options()
                 .write(true)
                 .read(true)
-                .open(base_path.join("route_trips"))?;
+                .open(base_path.join("route_trips"))
+                .unwrap();
             let stops = File::options()
                 .write(true)
                 .read(true)
-                .open(base_path.join("stops"))?;
+                .open(base_path.join("stops"))
+                .unwrap();
             let stop_routes = File::options()
                 .write(true)
                 .read(true)
-                .open(base_path.join("stop_routes"))?;
+                .open(base_path.join("stop_routes"))
+                .unwrap();
             let trip_stop_times = File::options()
                 .write(true)
                 .read(true)
-                .open(base_path.join("trip_stop_times"))?;
-            let _ = File::create(base_path.join("transfer_index"))?;
-            let _ = File::create(base_path.join("transfers"))?;
+                .open(base_path.join("trip_stop_times"))
+                .unwrap();
+            let _ = File::create(base_path.join("transfer_index")).unwrap();
+            let _ = File::create(base_path.join("transfers")).unwrap();
 
-            let mut backing_routes = unsafe { MmapOptions::new().map_mut(&routes)? };
-            let mut backing_route_stops = unsafe { MmapOptions::new().map_mut(&route_stops)? };
-            let mut backing_route_trips = unsafe { MmapOptions::new().map_mut(&route_trips)? };
-            let mut backing_stops = unsafe { MmapOptions::new().map_mut(&stops)? };
-            let mut backing_stop_routes = unsafe { MmapOptions::new().map_mut(&stop_routes)? };
+            let mut backing_routes = unsafe { MmapOptions::new().map_mut(&routes).unwrap() };
+            let mut backing_route_stops =
+                unsafe { MmapOptions::new().map_mut(&route_stops).unwrap() };
+            let mut backing_route_trips =
+                unsafe { MmapOptions::new().map_mut(&route_trips).unwrap() };
+            let mut backing_stops = unsafe { MmapOptions::new().map_mut(&stops).unwrap() };
+            let mut backing_stop_routes =
+                unsafe { MmapOptions::new().map_mut(&stop_routes).unwrap() };
             let mut backing_trip_stop_times =
-                unsafe { MmapOptions::new().map_mut(&trip_stop_times)? };
+                unsafe { MmapOptions::new().map_mut(&trip_stop_times).unwrap() };
 
             let mut route_cursor = 0usize;
             let mut route_stop_cursor = 0usize;
@@ -569,56 +589,62 @@ impl<'a> MmapTimetable<'a> {
                     trip_stop_time_cursor += tt.trip_stop_times().len();
                 }
             }
-            let metadata_db = Database::create(base_path.join("metadata.db"))?;
+            let metadata_db = Database::create(base_path.join("metadata.db")).unwrap();
             {
-                let write = metadata_db.begin_write()?;
+                let write = metadata_db.begin_write().unwrap();
                 {
-                    let mut table = write.open_table(STOP_METADATA_TABLE)?;
+                    let mut table = write.open_table(STOP_METADATA_TABLE).unwrap();
                     let mut cursor = 0usize;
                     for tt in timetables {
                         for stop in tt.stops() {
-                            let bytes = rmp_serde::to_vec(&tt.stop_metadata(stop))?;
-                            table.insert((cursor + stop.id()) as u64, bytes.as_slice())?;
+                            let bytes = rmp_serde::to_vec(&tt.stop_metadata(stop)).unwrap();
+                            table
+                                .insert((cursor + stop.id()) as u64, bytes.as_slice())
+                                .unwrap();
                         }
                         cursor += tt.stops().len();
                     }
                 }
-                write.commit()?;
+                write.commit().unwrap();
             }
             {
-                let write = metadata_db.begin_write()?;
+                let write = metadata_db.begin_write().unwrap();
                 {
-                    let mut table = write.open_table(TRIP_METADATA_TABLE)?;
+                    let mut table = write.open_table(TRIP_METADATA_TABLE).unwrap();
                     let mut cursor = 0usize;
                     for tt in timetables {
                         for trip in tt.route_trips() {
-                            let bytes = rmp_serde::to_vec(&tt.trip_metadata(trip))?;
-                            table.insert((cursor + trip.trip_index) as u64, bytes.as_slice())?;
+                            let bytes = rmp_serde::to_vec(&tt.trip_metadata(trip)).unwrap();
+                            table
+                                .insert((cursor + trip.trip_index) as u64, bytes.as_slice())
+                                .unwrap();
                         }
                         cursor += tt.route_trips().len();
                     }
                 }
-                write.commit()?;
+                write.commit().unwrap();
             }
             {
-                let write = metadata_db.begin_write()?;
+                let write = metadata_db.begin_write().unwrap();
                 {
-                    let mut table = write.open_table(ROUTE_SHAPE_TABLE)?;
+                    let mut table = write.open_table(ROUTE_SHAPE_TABLE).unwrap();
                     let mut cursor = 0usize;
                     for tt in timetables {
                         for route in tt.routes() {
-                            let bytes = rmp_serde::to_vec(&tt.route_shape(route))?;
-                            table.insert((cursor + route.route_index) as u64, bytes.as_slice())?;
+                            let bytes = rmp_serde::to_vec(&tt.route_shape(route)).unwrap();
+                            table
+                                .insert((cursor + route.route_index) as u64, bytes.as_slice())
+                                .unwrap();
                         }
                         cursor += tt.routes().len();
                     }
                 }
-                write.commit()?;
+                write.commit().unwrap();
             }
         }
-        let mut tt = MmapTimetable::open(base_path)?;
-        tt.calculate_transfers(valhalla_endpoint).await?;
-        Ok(tt)
+        let mut tt = MmapTimetable::open(base_path).unwrap();
+        tt.calculate_transfers(valhalla_endpoint).await.unwrap();
+        tt
     }
 
     pub(crate) async fn calculate_transfers(

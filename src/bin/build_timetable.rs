@@ -36,7 +36,7 @@ fn process_gtfs<'a>(
     };
     debug!("Processing feed: {:?}", path);
     let mut in_memory_timetable_builder = InMemoryTimetableBuilder::new();
-    in_memory_timetable_builder.preprocess_gtfs(&feed).unwrap();
+    in_memory_timetable_builder.preprocess_gtfs(&feed)?;
     let hash = {
         let mut hasher = DefaultHasher::new();
         hasher.write(path.to_str().unwrap().as_bytes());
@@ -64,7 +64,7 @@ async fn timetable_from_feeds<'a>(
         .collect();
 
     // Combine all timetables into a single one
-    let timetable = MmapTimetable::concatenate(&timetables, base_path, valhalla_endpoint).await?;
+    let timetable = MmapTimetable::concatenate(&timetables, base_path, valhalla_endpoint).await;
     Ok(timetable)
 }
 

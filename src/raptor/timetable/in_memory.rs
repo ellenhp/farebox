@@ -3,6 +3,7 @@ use std::{
     f32, u32,
 };
 
+use anyhow::bail;
 use chrono::{Days, Local, TimeDelta, TimeZone};
 use chrono_tz::Tz;
 use gtfs_structures::Gtfs;
@@ -393,8 +394,16 @@ impl<'a> InMemoryTimetableBuilder {
         {
             for (stop_id, gtfs_stop_id) in stop_id_to_stop_map.iter() {
                 let gtfs_stop = gtfs.get_stop(&gtfs_stop_id).unwrap();
-                let lat = gtfs_stop.latitude.expect("Unknown location");
-                let lng = gtfs_stop.longitude.expect("Unknown location");
+                let lat = if let Some(lat) = gtfs_stop.latitude {
+                    lat
+                } else {
+                    bail!("Can't process feeds containing stop IDs without lat/lng")
+                };
+                let lng = if let Some(lng) = gtfs_stop.longitude {
+                    lng
+                } else {
+                    bail!("Can't process feeds containing stop IDs without lat/lng")
+                };
                 let s2cell: CellID = LatLng::from_degrees(lat, lng).into();
                 let stop = Stop {
                     stop_index: *stop_id,
