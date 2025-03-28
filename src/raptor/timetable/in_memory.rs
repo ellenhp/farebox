@@ -233,6 +233,7 @@ impl<'a> InMemoryTimetableBuilder {
         let key = StopKey {
             gtfs_id: gtfs_id.clone(),
         };
+        // If the stop isn't already in our table, add it.
         if !self.stop_table.contains_key(&key) {
             let stop_id = StopId(self.next_stop_id);
             self.next_stop_id += 1;
@@ -244,10 +245,9 @@ impl<'a> InMemoryTimetableBuilder {
                     stop_routes: BTreeSet::new(),
                 },
             );
-            return self.stop_table.get_mut(&key).unwrap();
-        } else {
-            return self.stop_table.get_mut(&key).unwrap();
         }
+        // Return a mutable reference.
+        return self.stop_table.get_mut(&key).unwrap();
     }
 
     fn lookup_route_data(
@@ -255,12 +255,14 @@ impl<'a> InMemoryTimetableBuilder {
         gtfs: &Gtfs,
         trip: &gtfs_structures::Trip,
     ) -> &'a mut RouteData {
+        // Farebox defines a "route" as something distinct from a GTFS route, because in GTFS there's no guarantee that a route always has the same stops in the same order. In fact, for bidirectional lines, the same route is usually used for trips in both directions, which violates RAPTOR's assumptions. To deal with this, we define a "route" as a set of trips that all visit the same stops in the same order and have the same GTFS route ID in the same GTFS feed.
         let trip_stop_ids: Vec<String> = trip
             .stop_times
             .iter()
             .map(|stop_time| stop_time.stop.id.clone())
             .collect();
         let gtfs_route_id = trip.route_id.clone();
+        // If the `route_key` is shared between two trips, they belong to the same route.
         let route_key = RouteKey {
             trip_stop_ids,
             route_id: gtfs_route_id.clone(),
@@ -269,7 +271,7 @@ impl<'a> InMemoryTimetableBuilder {
             let route_id = RouteId(self.next_route_id);
             self.next_route_id += 1;
 
-            ////
+            // Determine the path that the route travels.
             let shape: Option<Vec<ShapeCoordinate>> = if let Some(shape_id) = &trip.shape_id {
                 if let Ok(coords) = gtfs.get_shape(&shape_id) {
                     Some(
@@ -289,8 +291,8 @@ impl<'a> InMemoryTimetableBuilder {
             } else {
                 None
             };
-            ////
 
+            // Determine the distance along the travel path of each stop.
             let shape_distances: Vec<f32> = trip
                 .stop_times
                 .iter()
@@ -303,6 +305,7 @@ impl<'a> InMemoryTimetableBuilder {
                 .map(|stop_time| self.lookup_stop_data(&stop_time.stop.id).id.clone())
                 .collect();
 
+            // Determine the human-readable agency name.
             let agency_name = gtfs
                 .agencies
                 .iter()
@@ -331,6 +334,7 @@ impl<'a> InMemoryTimetableBuilder {
 
             self.route_table.get_mut(&route_id).unwrap()
         } else {
+            // We already know of this route. Return a mutable reference.
             return self
                 .route_table
                 .get_mut(&self.route_index[&route_key])
@@ -346,6 +350,7 @@ impl<'a> InMemoryTimetableBuilder {
             .collect();
         let start_date = Local::now().date_naive().pred_opt().unwrap();
 
+        // First things first, go through every trip in the feed.
         for (gtfs_trip_id, trip) in &gtfs.trips {
             {
                 let route_data = self.lookup_route_data(gtfs, trip);
@@ -368,6 +373,8 @@ impl<'a> InMemoryTimetableBuilder {
                             .expect(
                                 "Failed to subtract 12 hours from noon on the given service day.",
                             );
+
+                        // Once we've assembled all the necessary data, push a trip to the route_data's trip_list for use later in `process_routes_trips`.
                         route_data.trip_list.push(TripInternal {
                             service_day_start,
                             stop_times: trip.stop_times.clone(),
