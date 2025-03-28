@@ -27,7 +27,7 @@ async fn plan(
                 from,
                 to,
                 Some(5000f64),
-                Some(20),
+                Some(100),
                 Some(max_transfers),
                 Some(2),
             )
