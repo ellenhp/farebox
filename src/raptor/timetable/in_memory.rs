@@ -4,9 +4,9 @@ use std::{
 };
 
 use anyhow::bail;
-use chrono::{Days, Local, NaiveDate, TimeDelta, TimeZone};
+use chrono::{Days, Local, NaiveDateTime, NaiveTime, TimeDelta, TimeZone};
 use chrono_tz::Tz;
-use gtfs_structures::{Agency, Gtfs};
+use gtfs_structures::{Agency, Gtfs, StopTime};
 use log::{debug, warn};
 use rstar::RTree;
 use s2::{cellid::CellID, latlng::LatLng};
@@ -149,6 +149,66 @@ pub struct InMemoryTimetableBuilder {
     next_route_stop_id: usize,
     next_trip_stop_time_id: usize,
     pub(crate) timetable: InMemoryTimetable,
+
+    stop_table: BTreeMap<StopKey, StopData>,
+    route_index: BTreeMap<RouteKey, RouteId>,
+    route_table: BTreeMap<RouteId, RouteData>,
+}
+
+#[derive(Debug, Clone, Copy, PartialOrd, PartialEq, Eq, Ord)]
+struct StopId(usize);
+
+#[derive(Debug, Clone, Copy, PartialOrd, PartialEq, Eq, Ord)]
+struct RouteId(usize);
+
+#[derive(Debug, Clone)]
+struct TripInternal {
+    service_day_start: NaiveDateTime,
+    stop_times: Vec<StopTime>,
+    gtfs_trip_id: String,
+}
+
+impl TripInternal {
+    fn get_departure(&self) -> Option<NaiveDateTime> {
+        let first_departure_time = self
+            .stop_times
+            .first()
+            .map(|stop_time| stop_time.departure_time)??;
+        Some(
+            self.service_day_start
+                .checked_add_signed(TimeDelta::seconds(first_departure_time as i64))
+                .expect("Failed to add departure time to service day start"),
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialOrd, PartialEq, Eq, Ord)]
+struct RouteKey {
+    trip_stop_ids: Vec<String>,
+    route_id: String,
+}
+
+#[derive(Debug, Clone)]
+struct RouteData {
+    id: RouteId,
+    gtfs_route_id: String,
+    shape: Option<Vec<ShapeCoordinate>>,
+    trip_list: Vec<TripInternal>,
+    stops: Vec<StopId>,
+    shape_distances: Vec<f32>,
+    agency_name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialOrd, PartialEq, Eq, Ord)]
+struct StopKey {
+    gtfs_id: String,
+}
+
+#[derive(Debug, Clone)]
+struct StopData {
+    id: StopId,
+    gtfs_id: String,
+    stop_routes: BTreeSet<RouteId>,
 }
 
 impl<'a> InMemoryTimetableBuilder {
@@ -161,9 +221,121 @@ impl<'a> InMemoryTimetableBuilder {
             next_route_stop_id: 0,
             next_trip_stop_time_id: 0,
             timetable: InMemoryTimetable::new(),
+            stop_table: BTreeMap::new(),
+            route_index: BTreeMap::new(),
+            route_table: BTreeMap::new(),
         };
         builder.preprocess_gtfs(gtfs)?;
         Ok(builder)
+    }
+
+    fn lookup_stop_data(&'a mut self, gtfs_id: &String) -> &'a mut StopData {
+        let key = StopKey {
+            gtfs_id: gtfs_id.clone(),
+        };
+        if !self.stop_table.contains_key(&key) {
+            let stop_id = StopId(self.next_stop_id);
+            self.next_stop_id += 1;
+            self.stop_table.insert(
+                key.clone(),
+                StopData {
+                    id: stop_id,
+                    gtfs_id: gtfs_id.clone(),
+                    stop_routes: BTreeSet::new(),
+                },
+            );
+            return self.stop_table.get_mut(&key).unwrap();
+        } else {
+            return self.stop_table.get_mut(&key).unwrap();
+        }
+    }
+
+    fn lookup_route_data(
+        &'a mut self,
+        gtfs: &Gtfs,
+        trip: &gtfs_structures::Trip,
+    ) -> &'a mut RouteData {
+        let trip_stop_ids: Vec<String> = trip
+            .stop_times
+            .iter()
+            .map(|stop_time| stop_time.stop.id.clone())
+            .collect();
+        let gtfs_route_id = trip.route_id.clone();
+        let route_key = RouteKey {
+            trip_stop_ids,
+            route_id: gtfs_route_id.clone(),
+        };
+        if !self.route_index.contains_key(&route_key) {
+            let route_id = RouteId(self.next_route_id);
+            self.next_route_id += 1;
+
+            ////
+            let shape: Option<Vec<ShapeCoordinate>> = if let Some(shape_id) = &trip.shape_id {
+                if let Ok(coords) = gtfs.get_shape(&shape_id) {
+                    Some(
+                        coords
+                            .iter()
+                            .map(|coord| ShapeCoordinate {
+                                lat: coord.latitude,
+                                lon: coord.longitude,
+                                distance_along_shape: coord.dist_traveled,
+                            })
+                            .collect(),
+                    )
+                } else {
+                    warn!("Could not look up shape {shape_id}");
+                    None
+                }
+            } else {
+                None
+            };
+            ////
+
+            let shape_distances: Vec<f32> = trip
+                .stop_times
+                .iter()
+                .map(|time| time.shape_dist_traveled.unwrap_or(f32::NAN))
+                .collect();
+
+            let stops = trip
+                .stop_times
+                .iter()
+                .map(|stop_time| self.lookup_stop_data(&stop_time.stop.id).id.clone())
+                .collect();
+
+            let agency_name = gtfs
+                .agencies
+                .iter()
+                .find(|agency| {
+                    agency.id
+                        == gtfs
+                            .get_route(&gtfs_route_id)
+                            .expect("Trip's route ID not found in route table.")
+                            .agency_id
+                })
+                .map(|agency| agency.name.clone());
+
+            self.route_index.insert(route_key.clone(), route_id);
+            self.route_table.insert(
+                route_id,
+                RouteData {
+                    id: route_id,
+                    gtfs_route_id,
+                    shape,
+                    trip_list: vec![],
+                    stops,
+                    shape_distances,
+                    agency_name,
+                },
+            );
+
+            self.route_table.get_mut(&route_id).unwrap()
+        } else {
+            return self
+                .route_table
+                .get_mut(&self.route_index[&route_key])
+                .unwrap();
+        }
     }
 
     fn preprocess_gtfs(&mut self, gtfs: &Gtfs) -> Result<(), anyhow::Error> {
@@ -174,125 +346,49 @@ impl<'a> InMemoryTimetableBuilder {
             .collect();
         let start_date = Local::now().date_naive().pred_opt().unwrap();
 
-        let mut stop_to_stop_id_map = BTreeMap::new();
-        for (gtfs_stop_id, _stop) in &gtfs.stops {
-            stop_to_stop_id_map.insert(gtfs_stop_id.clone(), self.next_stop_id);
-            self.next_stop_id += 1;
-        }
-
-        let mut route_to_route_id: BTreeMap<(Vec<usize>, String), (usize, Vec<f32>)> =
-            BTreeMap::new();
-        let mut route_shapes: BTreeMap<usize, Option<Vec<ShapeCoordinate>>> = BTreeMap::new();
-        let mut route_id_to_trip_list: BTreeMap<usize, Vec<(u16, String)>> = BTreeMap::new();
-        let mut stop_id_to_route_list: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
         for (gtfs_trip_id, trip) in &gtfs.trips {
-            let trip_stops: Vec<usize> = trip
-                .stop_times
-                .iter()
-                .map(|time| *stop_to_stop_id_map.get(&time.stop.id).unwrap())
-                .collect();
-            let trip_shape_distances: Vec<f32> = gtfs
-                .get_trip(&gtfs_trip_id)
-                .unwrap()
-                .stop_times
-                .iter()
-                .map(|time| time.shape_dist_traveled.unwrap_or(f32::NAN))
-                .collect();
-            let route_id = if let Some((id, _)) =
-                route_to_route_id.get(&(trip_stops.clone(), trip.route_id.clone()))
             {
-                *id
-            } else {
-                let id = self.next_route_id;
-                route_to_route_id.insert(
-                    (trip_stops.clone(), trip.route_id.clone()),
-                    (id, trip_shape_distances),
-                );
-                route_id_to_trip_list.insert(id, vec![]);
-
-                let polyline: Option<Vec<ShapeCoordinate>> = if let Some(shape_id) = &trip.shape_id
-                {
-                    if let Ok(coords) = gtfs.get_shape(&shape_id) {
-                        Some(
-                            coords
-                                .iter()
-                                .map(|coord| ShapeCoordinate {
-                                    lat: coord.latitude,
-                                    lon: coord.longitude,
-                                    distance_along_shape: coord.dist_traveled,
-                                })
-                                .collect(),
-                        )
-                    } else {
-                        warn!("Could not look up shape {shape_id}");
-                        None
+                let route_data = self.lookup_route_data(gtfs, trip);
+                let trip_days = gtfs.trip_days(&trip.service_id, start_date.clone());
+                for day in trip_days {
+                    if day <= 7 {
+                        let date_time_offset = start_date
+                            .checked_add_days(Days::new(day as u64))
+                            .expect(&format!(
+                                "Failed to add {day} days to date {:?}",
+                                start_date
+                            ));
+                        // The start of a service day is defined as noon minus 12 hours.
+                        let noon_service_day = date_time_offset.and_time(
+                            NaiveTime::from_hms_opt(12, 0, 0)
+                                .expect("Failed to add 12 hours to service day"),
+                        );
+                        let service_day_start = noon_service_day
+                            .checked_sub_signed(TimeDelta::hours(12))
+                            .expect(
+                                "Failed to subtract 12 hours from noon on the given service day.",
+                            );
+                        route_data.trip_list.push(TripInternal {
+                            service_day_start,
+                            stop_times: trip.stop_times.clone(),
+                            gtfs_trip_id: gtfs_trip_id.clone(),
+                        });
                     }
-                } else {
-                    None
-                };
-                route_shapes.insert(id, polyline);
-                self.next_route_id += 1;
-                id
-            };
-            for stop in &trip_stops {
-                if let Some(route_list) = stop_id_to_route_list.get_mut(&stop) {
-                    route_list.insert(route_id);
-                } else {
-                    let mut set: BTreeSet<usize> = BTreeSet::new();
-                    set.insert(route_id);
-                    stop_id_to_route_list.insert(*stop, set);
                 }
             }
-
-            let trip_days = gtfs.trip_days(&trip.service_id, start_date.clone());
-
-            for day in trip_days {
-                if day <= 7 {
-                    route_id_to_trip_list
-                        .get_mut(&route_id)
-                        .unwrap()
-                        .push((day, gtfs_trip_id.clone()));
-                }
+            let route_id = self.lookup_route_data(gtfs, trip).id;
+            for stop_time in &trip.stop_times {
+                self.lookup_stop_data(&stop_time.stop.id)
+                    .stop_routes
+                    .insert(route_id);
             }
         }
-        // Handy to have this sorted already. Maps internal stop ID to a gtfs-internal stop ID.
-        let stop_id_to_stop_map: BTreeMap<usize, String> = stop_to_stop_id_map
-            .iter()
-            .map(|(k, v)| (v.clone(), k.clone()))
-            .collect();
-
-        assert_eq!(stop_id_to_stop_map.len(), stop_to_stop_id_map.len());
-
-        // Handy to have this sorted already. Maps internal route ID to a sequence of internal stop IDs.
-        let route_id_to_route_map: BTreeMap<usize, Vec<usize>> = route_to_route_id
-            .iter()
-            .map(|((k, _), (v, _))| (v.clone(), k.clone()))
-            .collect();
-        let route_id_to_stop_distances: BTreeMap<usize, Vec<f32>> = route_to_route_id
-            .iter()
-            .map(|((_, _), (v, k))| (v.clone(), k.clone()))
-            .collect();
-
-        assert_eq!(route_to_route_id.len(), route_id_to_route_map.len());
 
         debug!("Done sorting");
 
-        self.process_routes_trips(
-            gtfs,
-            start_date,
-            &agencies,
-            &route_id_to_route_map,
-            &route_id_to_stop_distances,
-            &route_id_to_trip_list,
-            &route_shapes,
-        );
+        self.process_routes_trips(gtfs, &agencies)?;
 
-        self.process_stops(
-            gtfs,
-            &route_id_to_route_map,
-            &stop_id_to_stop_map,
-            &stop_id_to_route_list,
-        )?;
+        self.process_stops(gtfs)?;
 
         Result::Ok(())
     }
@@ -300,137 +396,136 @@ impl<'a> InMemoryTimetableBuilder {
     fn process_routes_trips(
         &mut self,
         gtfs: &Gtfs,
-        start_date: NaiveDate,
         agencies: &HashMap<String, &Agency>,
-        route_id_to_route_map: &BTreeMap<usize, Vec<usize>>,
-        route_id_to_stop_distances: &BTreeMap<usize, Vec<f32>>,
-        route_id_to_trip_list: &BTreeMap<usize, Vec<(u16, String)>>,
-        route_shapes: &BTreeMap<usize, Option<Vec<ShapeCoordinate>>>,
-    ) {
-        for (route_id, route_stop_list) in route_id_to_route_map.iter() {
+    ) -> Result<(), anyhow::Error> {
+        // TODO: How to deal with this route_table.clone()? It indicates an architectural problem IMO.
+        for (_, route_data) in self.route_table.clone().iter() {
             let route = Route {
-                route_index: *route_id,
+                route_index: route_data.id.0,
                 first_route_stop: self.next_route_stop_id,
                 first_route_trip: self.next_route_trip_id,
             };
             self.timetable
                 .route_shapes
-                .insert(route, route_shapes[route_id].clone());
+                .insert(route, route_data.shape.clone());
             self.timetable.routes.push(route);
 
-            for (stop_seq, stop_id) in route_stop_list.iter().enumerate() {
+            for (stop_seq, stop_id) in route_data.stops.iter().enumerate() {
                 self.timetable.route_stops.push(RouteStop {
-                    route_index: *route_id,
-                    stop_index: *stop_id,
+                    route_index: route_data.id.0,
+                    stop_index: stop_id.0,
                     stop_seq: stop_seq as u32,
-                    distance_along_route: route_id_to_stop_distances[route_id][stop_seq],
+                    distance_along_route: route_data.shape_distances[stop_seq],
                 });
                 self.next_route_stop_id += 1;
             }
-            let trips_pre_sort = route_id_to_trip_list.get(&route_id).unwrap().clone();
-            let mut trips = trips_pre_sort.clone();
-            trips.sort_by_cached_key(|(day, gtfs_trip_id)| {
-                gtfs.get_trip(gtfs_trip_id)
-                    .unwrap()
-                    .stop_times
-                    .iter()
-                    .filter_map(|stop_time| stop_time.departure_time)
-                    .next()
-                    .unwrap_or(u32::MAX)
-                    // TODO: This is a DST bug.
-                    .saturating_add(*day as u32 * 3600 * 24)
-            });
-            for (day, gtfs_trip_id) in &trips {
-                let trip_agency_id = gtfs.routes[&gtfs.trips[gtfs_trip_id].route_id]
-                    .agency_id
-                    .clone()
-                    .unwrap_or(String::new());
-                let trip_agency = if let Some(agency) = agencies.get(&trip_agency_id) {
-                    agency
-                } else {
-                    if agencies.len() == 1 {
-                        agencies.values().next().unwrap()
-                    } else {
-                        warn!("No matching agency: {}, {:?}", trip_agency_id, agencies);
-                        continue;
-                    }
-                };
-                let agency_tz: Tz = trip_agency.timezone.parse().unwrap();
-                let first_trip_stop_time = self.next_trip_stop_time_id;
-
-                let trip = gtfs.get_trip(gtfs_trip_id).unwrap();
-
-                #[cfg(feature = "enforce_invariants")]
-                let mut prev_time = 0u32;
-                for (stop_seq, stop_time) in trip.stop_times.iter().enumerate() {
-                    #[cfg(feature = "enforce_invariants")]
-                    if let Some(arrival_time) = stop_time.arrival_time {
-                        assert!(arrival_time >= prev_time);
-                        prev_time = arrival_time;
-                    }
-                    let day_start = agency_tz
-                        .from_local_datetime(
-                            &start_date
-                                .checked_add_days(Days::new(*day as u64))
-                                .unwrap()
-                                // GTFS "Time" fields are measured from noon minus 12hrs.
-                                .and_hms_opt(12, 0, 0)
-                                .unwrap(),
-                        )
-                        .unwrap()
-                        // GTFS "Time" fields are measured from noon minus 12hr.
-                        .checked_sub_signed(TimeDelta::hours(12))
-                        .unwrap();
-
-                    let arrival_time = day_start
-                        .checked_add_signed(TimeDelta::seconds(
-                            stop_time.arrival_time.unwrap_or(u32::MAX) as i64,
-                        ))
-                        .unwrap();
-                    let departure_time = day_start
-                        .checked_add_signed(TimeDelta::seconds(
-                            stop_time.departure_time.unwrap_or(u32::MAX) as i64,
-                        ))
-                        .unwrap();
-                    self.timetable.trip_stop_times.push(TripStopTime::new(
-                        self.next_route_trip_id,
-                        stop_seq,
-                        arrival_time,
-                        departure_time,
-                    ));
-                    self.next_trip_stop_time_id += 1;
-                }
-                let trip = Trip {
-                    trip_index: self.next_route_trip_id,
-                    route_index: *route_id,
-                    first_trip_stop_time,
-                    last_trip_stop_time: self.next_trip_stop_time_id,
-                };
-                self.timetable.route_trips.push(trip);
-                let agency_name = trip_agency.name.clone();
-                let metadata = TripMetadata {
-                    agency_name: Some(agency_name),
-                    headsign: gtfs.trips[gtfs_trip_id].clone().trip_headsign,
-                    route_name: gtfs.routes[&gtfs.trips[gtfs_trip_id].route_id]
-                        .short_name
-                        .clone(),
-                };
-                self.timetable.trip_metadata_map.insert(trip, metadata);
-
-                self.next_route_trip_id += 1;
+            let mut trips = route_data.trip_list.clone();
+            trips.sort_by_cached_key(|trip| trip.get_departure());
+            let tz = self
+                .trip_agency_timezone(gtfs, agencies, route_data)
+                .expect("Failed to parse timezone");
+            for trip in &trips {
+                self.process_trip(gtfs, route_data, trip, tz)?;
             }
         }
+        Ok(())
     }
 
-    fn process_stops(
+    fn trip_agency_timezone(
+        &self,
+        gtfs: &Gtfs,
+        agencies: &HashMap<String, &Agency>,
+        route_data: &RouteData,
+    ) -> Result<Tz, anyhow::Error> {
+        let trip_agency_id = gtfs.routes[&route_data.gtfs_route_id]
+            .agency_id
+            .clone()
+            .unwrap_or(String::new());
+        let trip_agency = if let Some(agency) = agencies.get(&trip_agency_id) {
+            agency
+        } else {
+            if agencies.len() == 1 {
+                agencies.values().next().unwrap()
+            } else {
+                bail!("No matching agency: {}, {:?}", trip_agency_id, agencies);
+            }
+        };
+        Ok(trip_agency.timezone.parse().map_err(|_err| {
+            anyhow::anyhow!(
+                "Failed to parse tz for agency {}: {}",
+                trip_agency,
+                trip_agency.timezone
+            )
+        })?)
+    }
+
+    fn process_trip(
         &mut self,
         gtfs: &Gtfs,
-        route_id_to_route_map: &BTreeMap<usize, Vec<usize>>,
-        stop_id_to_stop_map: &BTreeMap<usize, String>,
-        stop_id_to_route_list: &BTreeMap<usize, BTreeSet<usize>>,
+        route_data: &RouteData,
+        trip: &TripInternal,
+        agency_tz: chrono_tz::Tz,
     ) -> Result<(), anyhow::Error> {
-        for (stop_id, gtfs_stop_id) in stop_id_to_stop_map.iter() {
-            let gtfs_stop = gtfs.get_stop(&gtfs_stop_id).unwrap();
+        let first_trip_stop_time = self.next_trip_stop_time_id;
+
+        #[cfg(feature = "enforce_invariants")]
+        let mut prev_time = 0u32;
+        for (stop_seq, stop_time) in trip.stop_times.iter().enumerate() {
+            #[cfg(feature = "enforce_invariants")]
+            if let Some(arrival_time) = stop_time.arrival_time {
+                assert!(arrival_time >= prev_time);
+                prev_time = arrival_time;
+            }
+            let departure_time = trip
+                .get_departure()
+                .ok_or(anyhow::anyhow!("Trip missing departure time"))?;
+            let day_start = agency_tz.from_local_datetime(&departure_time).unwrap();
+
+            let arrival_time = day_start
+                .checked_add_signed(TimeDelta::seconds(
+                    stop_time.arrival_time.unwrap_or(u32::MAX) as i64,
+                ))
+                .unwrap();
+            let departure_time = day_start
+                .checked_add_signed(TimeDelta::seconds(
+                    stop_time.departure_time.unwrap_or(u32::MAX) as i64,
+                ))
+                .unwrap();
+            self.timetable.trip_stop_times.push(TripStopTime::new(
+                self.next_route_trip_id,
+                stop_seq,
+                arrival_time,
+                departure_time,
+            ));
+            self.next_trip_stop_time_id += 1;
+        }
+        let gtfs_trip = gtfs
+            .get_trip(&trip.gtfs_trip_id)
+            .expect("Trip not found in trip table.");
+        let trip = Trip {
+            trip_index: self.next_route_trip_id,
+            route_index: route_data.id.0,
+            first_trip_stop_time,
+            last_trip_stop_time: self.next_trip_stop_time_id,
+        };
+        self.timetable.route_trips.push(trip);
+        let metadata = TripMetadata {
+            agency_name: route_data.agency_name.clone(),
+            headsign: gtfs_trip.trip_headsign.clone(),
+            route_name: gtfs.routes[&route_data.gtfs_route_id].short_name.clone(),
+        };
+        self.timetable.trip_metadata_map.insert(trip, metadata);
+
+        self.next_route_trip_id += 1;
+
+        Ok(())
+    }
+
+    fn process_stops(&mut self, gtfs: &Gtfs) -> Result<(), anyhow::Error> {
+        let mut sorted_stops: Vec<&StopData> = self.stop_table.values().collect();
+        sorted_stops.sort_by_cached_key(|stop_data| stop_data.id);
+        for stop_data in sorted_stops {
+            let gtfs_stop = gtfs.get_stop(&stop_data.gtfs_id).unwrap();
             let lat = if let Some(lat) = gtfs_stop.latitude {
                 lat
             } else {
@@ -443,7 +538,7 @@ impl<'a> InMemoryTimetableBuilder {
             };
             let s2cell: CellID = LatLng::from_degrees(lat, lng).into();
             let stop = Stop {
-                stop_index: *stop_id,
+                stop_index: stop_data.id.0,
                 s2cell: s2cell.0,
                 first_stop_route_index: self.next_stop_route_id,
             };
@@ -451,14 +546,11 @@ impl<'a> InMemoryTimetableBuilder {
             self.timetable
                 .stop_metadata_map
                 .insert(stop, gtfs_stop.clone());
-            for route in stop_id_to_route_list
-                .get(&stop_id)
-                .unwrap_or(&BTreeSet::new())
-            {
+            for route in &stop_data.stop_routes {
                 let mut seq = 0usize;
                 let mut found_seq = false;
-                for route_stop_seq_candidate in route_id_to_route_map.get(route).unwrap() {
-                    if stop_id == route_stop_seq_candidate {
+                for route_stop_seq_candidate in &self.route_table[&route].stops {
+                    if &stop_data.id == route_stop_seq_candidate {
                         found_seq = true;
                         break;
                     }
@@ -466,7 +558,7 @@ impl<'a> InMemoryTimetableBuilder {
                 }
                 assert!(found_seq);
                 self.timetable.stop_routes.push(StopRoute {
-                    route_index: *route,
+                    route_index: route.0,
                     stop_seq: seq,
                 });
                 self.next_stop_route_id += 1;
