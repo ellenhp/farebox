@@ -35,8 +35,7 @@ fn process_gtfs<'a>(
         bail!(format!("Failed to load feed: {:?}", path));
     };
     debug!("Processing feed: {:?}", path);
-    let mut in_memory_timetable_builder = InMemoryTimetableBuilder::new();
-    in_memory_timetable_builder.preprocess_gtfs(&feed)?;
+    let in_memory_timetable_builder = InMemoryTimetableBuilder::new(&feed)?;
     let hash = {
         let mut hasher = DefaultHasher::new();
         hasher.write(path.to_str().unwrap().as_bytes());
@@ -60,10 +59,17 @@ async fn timetable_from_feeds<'a>(
 
     let timetables: Vec<MmapTimetable<'_>> = paths
         .par_iter()
-        .filter_map(|path| process_gtfs(&path, base_path).ok())
+        .filter_map(|path| {
+            process_gtfs(&path, base_path)
+                .map_err(|err| {
+                    log::error!("Failed to process GTFS feed: {}", err);
+                    err
+                })
+                .ok()
+        })
         .collect();
 
-    // Combine all timetables into a single one
+    // Combine all timetables into one.
     let timetable = MmapTimetable::concatenate(&timetables, base_path, valhalla_endpoint).await;
     Ok(timetable)
 }

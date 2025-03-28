@@ -55,6 +55,9 @@ pub struct MmapTimetable<'a> {
     metadata_db: redb::Database,
 
     phantom: &'a PhantomData<()>,
+
+    // reqwest client.
+    client: Client,
 }
 
 impl<'a> Timetable<'a> for MmapTimetable<'a> {
@@ -250,6 +253,7 @@ impl<'a> MmapTimetable<'a> {
             backing_transfer_index,
             backing_transfers,
             phantom: &PhantomData,
+            client: reqwest::Client::new(),
 
             rtree,
             routes_slice: routes,
@@ -666,100 +670,15 @@ impl<'a> MmapTimetable<'a> {
         }
         assert_eq!(self.stops().len(), self.rtree.size());
 
-        let client = Client::new();
         debug!("Calculating transfer times");
         let transfers = {
             let transfers: Vec<_> = self
                 .stops()
                 .iter()
-                .map(|from_stop| {
-                    let latlng = from_stop.location();
-                    let mut transfer_candidates = vec![];
-                    for (count, (to_stop, dist_sq)) in self
-                        .rtree
-                        .nearest_neighbor_iter_with_distance_2(&lat_lng_to_cartesian(
-                            latlng.lat.deg(),
-                            latlng.lng.deg(),
-                        ))
-                        .enumerate()
-                    {
-                        let dist = dist_sq.sqrt();
-                        if dist > 5000f64 {
-                            break;
-                        } else if dist > 3000f64 && count > 50 {
-                            break;
-                        }
-                        transfer_candidates.push(self.stop(to_stop.id));
-                    }
-                    (
-                        from_stop,
-                        transfer_candidates,
-                        client.clone(),
-                        valhalla_endpoint.clone(),
-                    )
+                .map(|from_stop| async {
+                    self.calculate_transfer_matrix(from_stop, valhalla_endpoint.clone())
+                        .await
                 })
-                .map(
-                    |(from_stop, transfer_candidates, client, valhalla_endpoint)| async move {
-                        let latlng = from_stop.location();
-                        if let Some(valhalla_endpoint) = valhalla_endpoint {
-                            let request = MatrixRequest {
-                                sources: vec![ValhallaLocation {
-                                    lat: latlng.lat.deg(),
-                                    lon: latlng.lng.deg(),
-                                }],
-                                targets: transfer_candidates
-                                    .iter()
-                                    .map(|stop| ValhallaLocation {
-                                        lat: stop.location().lat.deg(),
-                                        lon: stop.location().lng.deg(),
-                                    })
-                                    .collect(),
-                                costing: "pedestrian".to_string(),
-                                matrix_locations: usize::max(transfer_candidates.len(), 25),
-                            };
-                            let transfer_matrix_response =
-                                matrix_request(&client, &valhalla_endpoint, request)
-                                    .await
-                                    .unwrap();
-
-                            let mut line_items = vec![];
-
-                            for line_item in &transfer_matrix_response.sources_to_targets[0] {
-                                let to_index = if let Some(to_index) = line_item.to_index {
-                                    to_index
-                                } else {
-                                    warn!("Invalid line item in valhalla response {:?}", line_item);
-                                    continue;
-                                };
-                                let time = if let Some(time) = line_item.time {
-                                    time
-                                } else {
-                                    warn!("Invalid line item in valhalla response {:?}", line_item);
-                                    continue;
-                                };
-
-                                line_items.push(Transfer {
-                                    to: transfer_candidates[to_index].id(),
-                                    from: from_stop.id(),
-                                    time: time as u64,
-                                });
-                            }
-                            line_items
-                        } else {
-                            transfer_candidates
-                                .iter()
-                                .map(|to_stop| Transfer {
-                                    to: to_stop.id(),
-                                    from: from_stop.id(),
-                                    time: (FAKE_WALK_SPEED_SECONDS_PER_METER
-                                        * latlng.distance(&to_stop.location()).rad()
-                                        * EARTH_RADIUS_APPROX)
-                                        as u64,
-                                })
-                                .collect()
-                        }
-                    },
-                )
                 .collect();
             let mut awaited_transfers = vec![];
             for transfer in transfers {
@@ -812,5 +731,111 @@ impl<'a> MmapTimetable<'a> {
             }
         }
         Ok(())
+    }
+
+    fn generate_transfer_candidates(&self, stop: &Stop) -> Vec<&Stop> {
+        let latlng = stop.location();
+        let mut transfer_candidates = vec![];
+        for (count, (to_stop, dist_sq)) in self
+            .rtree
+            .nearest_neighbor_iter_with_distance_2(&lat_lng_to_cartesian(
+                latlng.lat.deg(),
+                latlng.lng.deg(),
+            ))
+            .enumerate()
+        {
+            let dist = dist_sq.sqrt();
+            if dist > 5000f64 {
+                break;
+            } else if dist > 3000f64 && count > 50 {
+                break;
+            }
+            transfer_candidates.push(self.stop(to_stop.id));
+        }
+        transfer_candidates
+    }
+
+    /// Calculate the transfer matrix using the given valhalla endpoint.
+    async fn valhalla_transfer_matrix(
+        &self,
+        stop: &Stop,
+        transfer_candidates: Vec<&Stop>,
+        valhalla_endpoint: String,
+    ) -> Vec<Transfer> {
+        let latlng = stop.location();
+        let request = MatrixRequest {
+            sources: vec![ValhallaLocation {
+                lat: latlng.lat.deg(),
+                lon: latlng.lng.deg(),
+            }],
+            targets: transfer_candidates
+                .iter()
+                .map(|stop| ValhallaLocation {
+                    lat: stop.location().lat.deg(),
+                    lon: stop.location().lng.deg(),
+                })
+                .collect(),
+            costing: "pedestrian".to_string(),
+            matrix_locations: usize::max(transfer_candidates.len(), 25),
+        };
+        let transfer_matrix_response = matrix_request(&self.client, &valhalla_endpoint, request)
+            .await
+            .unwrap();
+
+        let mut line_items = vec![];
+
+        for line_item in &transfer_matrix_response.sources_to_targets[0] {
+            let to_index = if let Some(to_index) = line_item.to_index {
+                to_index
+            } else {
+                warn!("Invalid line item in valhalla response {:?}", line_item);
+                continue;
+            };
+            let time = if let Some(time) = line_item.time {
+                time
+            } else {
+                warn!("Invalid line item in valhalla response {:?}", line_item);
+                continue;
+            };
+
+            line_items.push(Transfer {
+                to: transfer_candidates[to_index].id(),
+                from: stop.id(),
+                time: time as u64,
+            });
+        }
+        line_items
+    }
+
+    fn fake_walk_speed_transfer_matrix(
+        &self,
+        stop: &Stop,
+        transfer_candidates: Vec<&Stop>,
+    ) -> Vec<Transfer> {
+        let latlng = stop.location();
+        transfer_candidates
+            .iter()
+            .map(|to_stop| Transfer {
+                to: to_stop.id(),
+                from: stop.id(),
+                time: (FAKE_WALK_SPEED_SECONDS_PER_METER
+                    * latlng.distance(&to_stop.location()).rad()
+                    * EARTH_RADIUS_APPROX) as u64,
+            })
+            .collect()
+    }
+
+    async fn calculate_transfer_matrix(
+        &self,
+        stop: &Stop,
+        valhalla_endpoint: Option<String>,
+    ) -> Vec<Transfer> {
+        let transfer_candidates = self.generate_transfer_candidates(stop);
+        if let Some(valhalla_endpoint) = valhalla_endpoint {
+            self.valhalla_transfer_matrix(stop, transfer_candidates, valhalla_endpoint)
+                .await
+        } else {
+            self.fake_walk_speed_transfer_matrix(stop, transfer_candidates)
+        }
     }
 }
