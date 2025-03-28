@@ -368,6 +368,23 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
         }
     }
 
+    fn cost_scaling_final_transfer(
+        &self,
+        context: &RouterContext<'a, T>,
+        itinerary: &InternalItinerary,
+        scalar: f64,
+    ) -> u32 {
+        let last_step = &context.step_log[itinerary.last_step];
+        if last_step.trip.is_none() {
+            let last_step_duration =
+                last_step.arrival.epoch_seconds() - last_step.departure.epoch_seconds();
+            let scaled = last_step_duration as f64 * scalar;
+            return last_step.departure.epoch_seconds() + scaled as u32;
+        } else {
+            return last_step.arrival.epoch_seconds();
+        }
+    }
+
     fn pick_best_itineraries(
         &self,
         context: &RouterContext<'a, T>,
@@ -385,7 +402,10 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
                             .as_ref()
                             .map(|it| (it, dbg!(*cost as f64 * walking_scalar)))
                     })
-                    .min_by_key(|(it, cost)| it.final_time.epoch_seconds() + (*cost as u32))
+                    .min_by_key(|(it, cost)| {
+                        self.cost_scaling_final_transfer(context, *it, walking_scalar)
+                            + *cost as u32
+                    })
                 {
                     itineraries.insert(itinerary.clone());
                 }
@@ -635,9 +655,7 @@ where
                 true
             };
             let round = round as usize;
-            let is_target = self.targets.iter().any(|(target, _)| target == &stop.id());
-            // Don't end a route on a transfer.
-            if is_best_global && (!is_target || via.is_some()) {
+            if is_best_global {
                 let latest_step = InternalStep {
                     from: from.clone(),
                     to: to.clone(),
@@ -870,9 +888,9 @@ where
                     continue;
                 };
                 // Don't transfer twice in a row.
-                if self.step_log[last_step].route.is_none() {
-                    continue;
-                }
+                // if self.step_log[last_step].route.is_none() {
+                //     continue;
+                // }
                 let best_arrival_at_transfer_start = self.best_times_global[stop.id()]
                     .as_ref()
                     .unwrap()
