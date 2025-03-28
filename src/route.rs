@@ -620,7 +620,6 @@ where
         previous_step: usize,
     ) -> bool {
         if let InternalStepLocation::Stop(stop) = to {
-            let is_target = self.targets.iter().any(|(target, _)| target == &stop.id());
             let is_better_than_destination_global =
                 if let Some(best_time) = self.best_time_to_target() {
                     arrival_time < best_time
@@ -636,6 +635,7 @@ where
                 true
             };
             let round = round as usize;
+            let is_target = self.targets.iter().any(|(target, _)| target == &stop.id());
             // Don't end a route on a transfer.
             if is_best_global && (!is_target || via.is_some()) {
                 let latest_step = InternalStep {
