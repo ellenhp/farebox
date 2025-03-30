@@ -356,7 +356,7 @@ impl<'a> InMemoryTimetableBuilder {
                 let route_data = self.lookup_route_data(gtfs, trip);
                 let trip_days = gtfs.trip_days(&trip.service_id, start_date.clone());
                 for day in trip_days {
-                    if day <= 7 {
+                    if day <= 14 {
                         let date_time_offset = start_date
                             .checked_add_days(Days::new(day as u64))
                             .expect(&format!(
