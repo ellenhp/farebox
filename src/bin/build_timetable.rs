@@ -23,6 +23,8 @@ struct BuildArgs {
     valhalla_endpoint: Option<String>,
     #[arg(short, long, default_value_t = 1)]
     num_threads: usize,
+    #[arg(long, default_value_t = false)]
+    concat_only: bool,
 }
 
 fn process_gtfs<'a>(
@@ -48,6 +50,23 @@ fn process_gtfs<'a>(
         &in_memory_timetable_builder,
         &timetable_dir,
     )?)
+}
+
+async fn concat_timetables<'a>(
+    paths: &[PathBuf],
+    base_path: &PathBuf,
+    valhalla_endpoint: Option<String>,
+) -> Result<MmapTimetable<'a>, anyhow::Error> {
+    let paths = paths.to_vec();
+
+    let timetables: Vec<MmapTimetable<'_>> = paths
+        .par_iter()
+        .filter_map(|path| MmapTimetable::open(path).ok())
+        .collect();
+
+    // Combine all timetables into one.
+    let timetable = MmapTimetable::concatenate(&timetables, base_path, valhalla_endpoint).await;
+    Ok(timetable)
 }
 
 async fn timetable_from_feeds<'a>(
@@ -93,6 +112,15 @@ async fn main() {
             timetable_from_feeds(&paths, &args.base_path.into(), args.valhalla_endpoint)
                 .await
                 .unwrap();
+    } else if args.concat_only {
+        let paths: Vec<PathBuf> = fs::read_dir(&args.base_path)
+            .unwrap()
+            .map(|p| p.unwrap().path())
+            .collect();
+
+        let _timetable = concat_timetables(&paths, &args.base_path.into(), args.valhalla_endpoint)
+            .await
+            .unwrap();
     } else {
         let _timetable = timetable_from_feeds(
             &[args.gtfs_path.into()],
