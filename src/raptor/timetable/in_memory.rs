@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::bail;
-use chrono::{Days, Local, NaiveDateTime, NaiveTime, TimeDelta, TimeZone};
+use chrono::{offset::LocalResult, Days, Local, NaiveDateTime, NaiveTime, TimeDelta, TimeZone};
 use chrono_tz::Tz;
 use gtfs_structures::{Agency, Gtfs, StopTime};
 use log::{debug, warn};
@@ -489,7 +489,13 @@ impl<'a> InMemoryTimetableBuilder {
             let departure_time = trip
                 .get_departure()
                 .ok_or(anyhow::anyhow!("Trip missing departure time"))?;
-            let day_start = agency_tz.from_local_datetime(&departure_time).unwrap();
+            let day_start = if let LocalResult::Single(day_start) =
+                agency_tz.from_local_datetime(&departure_time)
+            {
+                day_start
+            } else {
+                bail!("Failed to perform timezone math on DateTime: {departure_time}")
+            };
 
             let arrival_time = day_start
                 .checked_add_signed(TimeDelta::seconds(
