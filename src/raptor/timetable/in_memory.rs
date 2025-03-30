@@ -356,10 +356,16 @@ impl<'a> InMemoryTimetableBuilder {
         // First things first, go through every trip in the feed.
         for (gtfs_trip_id, trip) in &gtfs.trips {
             {
-                let agency_id = gtfs.routes[&trip.route_id]
-                    .agency_id
-                    .clone()
-                    .unwrap_or(String::new());
+                let agency_id = if let Some(agency_id) = gtfs
+                    .routes
+                    .get(&trip.route_id)
+                    .map(|route| route.agency_id.clone())
+                    .flatten()
+                {
+                    agency_id
+                } else {
+                    continue;
+                };
                 let tz = self
                     .trip_agency_timezone(&agencies, &agency_id)
                     .expect("Failed to parse timezone");
