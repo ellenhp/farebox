@@ -59,6 +59,7 @@ async fn timetable_from_feeds<'a>(
 
     let timetables: Vec<MmapTimetable<'_>> = paths
         .par_iter()
+        .filter(|path| path.extension().map(|ext| ext == "zip") == Some(true))
         .filter_map(|path| {
             process_gtfs(&path, base_path)
                 .map_err(|err| {
