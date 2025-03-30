@@ -489,12 +489,15 @@ impl<'a> InMemoryTimetableBuilder {
             let departure_time = trip
                 .get_departure()
                 .ok_or(anyhow::anyhow!("Trip missing departure time"))?;
-            let day_start = if let LocalResult::Single(day_start) =
-                agency_tz.from_local_datetime(&departure_time)
-            {
-                day_start
-            } else {
-                bail!("Failed to perform timezone math on DateTime: {departure_time}")
+            let day_start = match agency_tz.from_local_datetime(&departure_time) {
+                LocalResult::Single(day_start) => day_start,
+                LocalResult::Ambiguous(a, _b) => {
+                    // e.g. 2am at a daylight savings time switchover. Pick one and call it good.
+                    a
+                }
+                LocalResult::None => {
+                    bail!("Failed to perform timezone math on DateTime: {departure_time}");
+                }
             };
 
             let arrival_time = day_start
