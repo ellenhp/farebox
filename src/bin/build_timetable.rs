@@ -102,7 +102,16 @@ async fn main() {
         .num_threads(args.num_threads)
         .build_global()
         .unwrap();
-    if fs::metadata(&args.gtfs_path).unwrap().is_dir() {
+    if args.concat_only {
+        let paths: Vec<PathBuf> = fs::read_dir(&args.base_path)
+            .unwrap()
+            .map(|p| p.unwrap().path())
+            .collect();
+
+        let _timetable = concat_timetables(&paths, &args.base_path.into(), args.valhalla_endpoint)
+            .await
+            .unwrap();
+    } else if fs::metadata(&args.gtfs_path).unwrap().is_dir() {
         let paths: Vec<PathBuf> = fs::read_dir(&args.gtfs_path)
             .unwrap()
             .map(|p| p.unwrap().path())
@@ -112,15 +121,6 @@ async fn main() {
             timetable_from_feeds(&paths, &args.base_path.into(), args.valhalla_endpoint)
                 .await
                 .unwrap();
-    } else if args.concat_only {
-        let paths: Vec<PathBuf> = fs::read_dir(&args.base_path)
-            .unwrap()
-            .map(|p| p.unwrap().path())
-            .collect();
-
-        let _timetable = concat_timetables(&paths, &args.base_path.into(), args.valhalla_endpoint)
-            .await
-            .unwrap();
     } else {
         let _timetable = timetable_from_feeds(
             &[args.gtfs_path.into()],
