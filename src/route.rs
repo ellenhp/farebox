@@ -400,7 +400,7 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
                     .filter_map(|(target_id, cost)| {
                         context.best_times_per_round[round as usize][*target_id]
                             .as_ref()
-                            .map(|it| (it, dbg!(*cost as f64 * walking_scalar)))
+                            .map(|it| (it, *cost as f64 * walking_scalar))
                     })
                     .min_by_key(|(it, cost)| {
                         self.cost_scaling_final_transfer(context, *it, walking_scalar)
