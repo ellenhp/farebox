@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::bail;
-use chrono::{Days, Local, NaiveDateTime, NaiveTime, TimeDelta, TimeZone};
+use chrono::{offset::LocalResult, DateTime, Days, Local, NaiveTime, TimeDelta, TimeZone};
 use chrono_tz::Tz;
 use gtfs_structures::{Agency, Gtfs, StopTime};
 use log::{debug, warn};
@@ -163,17 +163,20 @@ struct RouteId(usize);
 
 #[derive(Debug, Clone)]
 struct TripInternal {
-    service_day_start: NaiveDateTime,
+    service_day_start: DateTime<chrono_tz::Tz>,
     stop_times: Vec<StopTime>,
     gtfs_trip_id: String,
 }
 
 impl TripInternal {
-    fn get_departure(&self) -> Option<NaiveDateTime> {
+    fn get_departure(&self) -> Option<DateTime<chrono_tz::Tz>> {
         let first_departure_time = self
             .stop_times
             .first()
             .map(|stop_time| stop_time.departure_time)??;
+        if first_departure_time == u32::MAX {
+            return None;
+        }
         Some(
             self.service_day_start
                 .checked_add_signed(TimeDelta::seconds(first_departure_time as i64))
@@ -353,10 +356,23 @@ impl<'a> InMemoryTimetableBuilder {
         // First things first, go through every trip in the feed.
         for (gtfs_trip_id, trip) in &gtfs.trips {
             {
+                let agency_id = if let Some(agency_id) = gtfs
+                    .routes
+                    .get(&trip.route_id)
+                    .map(|route| route.agency_id.clone())
+                    .flatten()
+                {
+                    agency_id
+                } else {
+                    continue;
+                };
+                let tz = self
+                    .trip_agency_timezone(&agencies, &agency_id)
+                    .expect("Failed to parse timezone");
                 let route_data = self.lookup_route_data(gtfs, trip);
                 let trip_days = gtfs.trip_days(&trip.service_id, start_date.clone());
                 for day in trip_days {
-                    if day <= 7 {
+                    if day <= 14 {
                         let date_time_offset = start_date
                             .checked_add_days(Days::new(day as u64))
                             .expect(&format!(
@@ -364,10 +380,21 @@ impl<'a> InMemoryTimetableBuilder {
                                 start_date
                             ));
                         // The start of a service day is defined as noon minus 12 hours.
-                        let noon_service_day = date_time_offset.and_time(
-                            NaiveTime::from_hms_opt(12, 0, 0)
-                                .expect("Failed to add 12 hours to service day"),
-                        );
+                        let noon_service_day = match tz.from_local_datetime(
+                            &date_time_offset.and_time(
+                                NaiveTime::from_hms_opt(12, 0, 0)
+                                    .expect("Failed to add 12 hours to service day"),
+                            ),
+                        ) {
+                            LocalResult::Single(date_time) => date_time,
+                            LocalResult::Ambiguous(a, _b) => {
+                                // Pick one and call it good.
+                                a
+                            }
+                            LocalResult::None => {
+                                bail!("Gap in time (at noon? shouldn't be possible), can't determine service day start")
+                            }
+                        };
                         let service_day_start = noon_service_day
                             .checked_sub_signed(TimeDelta::hours(12))
                             .expect(
@@ -393,18 +420,14 @@ impl<'a> InMemoryTimetableBuilder {
 
         debug!("Done sorting");
 
-        self.process_routes_trips(gtfs, &agencies)?;
+        self.process_routes_trips(gtfs)?;
 
         self.process_stops(gtfs)?;
 
         Result::Ok(())
     }
 
-    fn process_routes_trips(
-        &mut self,
-        gtfs: &Gtfs,
-        agencies: &HashMap<String, &Agency>,
-    ) -> Result<(), anyhow::Error> {
+    fn process_routes_trips(&mut self, gtfs: &Gtfs) -> Result<(), anyhow::Error> {
         // TODO: How to deal with this route_table.clone()? It indicates an architectural problem IMO.
         for (_, route_data) in self.route_table.clone().iter() {
             let route = Route {
@@ -428,11 +451,8 @@ impl<'a> InMemoryTimetableBuilder {
             }
             let mut trips = route_data.trip_list.clone();
             trips.sort_by_cached_key(|trip| trip.get_departure());
-            let tz = self
-                .trip_agency_timezone(gtfs, agencies, route_data)
-                .expect("Failed to parse timezone");
             for trip in &trips {
-                self.process_trip(gtfs, route_data, trip, tz)?;
+                self.process_trip(gtfs, route_data, trip)?;
             }
         }
         Ok(())
@@ -440,15 +460,10 @@ impl<'a> InMemoryTimetableBuilder {
 
     fn trip_agency_timezone(
         &self,
-        gtfs: &Gtfs,
         agencies: &HashMap<String, &Agency>,
-        route_data: &RouteData,
+        trip_agency_id: &String,
     ) -> Result<Tz, anyhow::Error> {
-        let trip_agency_id = gtfs.routes[&route_data.gtfs_route_id]
-            .agency_id
-            .clone()
-            .unwrap_or(String::new());
-        let trip_agency = if let Some(agency) = agencies.get(&trip_agency_id) {
+        let trip_agency = if let Some(agency) = agencies.get(trip_agency_id) {
             agency
         } else {
             if agencies.len() == 1 {
@@ -471,7 +486,6 @@ impl<'a> InMemoryTimetableBuilder {
         gtfs: &Gtfs,
         route_data: &RouteData,
         trip: &TripInternal,
-        agency_tz: chrono_tz::Tz,
     ) -> Result<(), anyhow::Error> {
         let first_trip_stop_time = self.next_trip_stop_time_id;
 
@@ -483,17 +497,14 @@ impl<'a> InMemoryTimetableBuilder {
                 assert!(arrival_time >= prev_time);
                 prev_time = arrival_time;
             }
-            let departure_time = trip
-                .get_departure()
-                .ok_or(anyhow::anyhow!("Trip missing departure time"))?;
-            let day_start = agency_tz.from_local_datetime(&departure_time).unwrap();
-
-            let arrival_time = day_start
+            let arrival_time = trip
+                .service_day_start
                 .checked_add_signed(TimeDelta::seconds(
                     stop_time.arrival_time.unwrap_or(u32::MAX) as i64,
                 ))
                 .unwrap();
-            let departure_time = day_start
+            let departure_time = trip
+                .service_day_start
                 .checked_add_signed(TimeDelta::seconds(
                     stop_time.departure_time.unwrap_or(u32::MAX) as i64,
                 ))

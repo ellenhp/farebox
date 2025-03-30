@@ -1,4 +1,8 @@
-use std::{cell::RefCell, collections::HashMap, marker::PhantomData};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    marker::PhantomData,
+};
 
 use geo::ClosestPoint;
 use geo_types::{Coord, Line, LineString, Point};
@@ -171,41 +175,62 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
             .await;
         context.route().await;
 
-        // TODO: Redo all of this once `seconds_since_service_day_start` is private.
-        let (best_itinerary, last_leg_cost) = if let Some(itinerary) = target_costs
+        let best_itineraries = self
+            .pick_best_itineraries(&context, &target_costs)
             .iter()
-            .filter_map(|(target_id, cost)| {
-                context.best_times_global[*target_id]
-                    .as_ref()
-                    .map(|it| (it, *cost))
+            .map(|itinerary| {
+                self.unwind_itinerary(
+                    &context,
+                    itinerary,
+                    route_start_time,
+                    &target_costs,
+                    start_location,
+                    target_location,
+                )
             })
-            .min_by_key(|(it, cost)| it.final_time.epoch_seconds() + cost)
-        {
-            itinerary
-        } else {
-            return FareboxResponse {
-                status: ResponseStatus::NoRouteFound,
-                itineraries: vec![],
-            };
-        };
+            .collect();
 
+        FareboxResponse {
+            status: ResponseStatus::Ok,
+            itineraries: best_itineraries,
+        }
+    }
+
+    fn unwind_itinerary(
+        &'a self,
+        context: &RouterContext<'a, T>,
+        itinerary: &InternalItinerary,
+        route_start_time: Time,
+        target_costs: &[(usize, u32)],
+        start_location: LatLng,
+        target_location: LatLng,
+    ) -> FareboxItinerary {
         let mut steps = vec![];
-        let mut step_cursor = best_itinerary.last_step;
+        let mut step_cursor = itinerary.last_step;
         {
             let step = &context.step_log[step_cursor];
-            let to = &target_location;
             let from = if let InternalStepLocation::Stop(stop) = step.to {
                 stop
             } else {
                 panic!();
             };
+            let to = if let InternalStepLocation::Stop(stop) = step.to {
+                stop
+            } else {
+                panic!();
+            };
             let from_location = from.location();
+            let last_leg_cost = target_costs
+                .iter()
+                .find(|(target, _cost)| target == &to.id())
+                .map(|(_target, cost)| *cost)
+                .expect("Target cost not found");
             steps.push((
                 Step::End(EndStep {
                     last_stop: from.metadata(&self.timetable).name.clone(),
                     last_stop_latlng: [from_location.lat.deg(), from_location.lng.deg()],
                     last_stop_departure_epoch_seconds: step.arrival.epoch_seconds() as u64,
-                    end_latlng: [to.lat.deg(), to.lng.deg()],
+                    end_latlng: [target_location.lat.deg(), target_location.lng.deg()],
                     end_epoch_seconds: (step.arrival.epoch_seconds() + last_leg_cost) as u64,
                 }),
                 step_cursor,
@@ -323,7 +348,7 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        let itinerary = FareboxItinerary {
+        FareboxItinerary {
             start_location: crate::api::LatLng {
                 lat: start_location.lat.deg(),
                 lon: start_location.lng.deg(),
@@ -340,11 +365,54 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
             end_time: OffsetDateTime::from_unix_timestamp(end_time as i64)
                 .expect("Invalid Unix timestamp"),
             legs,
-        };
-        FareboxResponse {
-            status: ResponseStatus::Ok,
-            itineraries: vec![itinerary],
         }
+    }
+
+    fn cost_scaling_final_transfer(
+        &self,
+        context: &RouterContext<'a, T>,
+        itinerary: &InternalItinerary,
+        scalar: f64,
+    ) -> u32 {
+        let last_step = &context.step_log[itinerary.last_step];
+        if last_step.trip.is_none() {
+            let last_step_duration =
+                last_step.arrival.epoch_seconds() - last_step.departure.epoch_seconds();
+            let scaled = last_step_duration as f64 * scalar;
+            return last_step.departure.epoch_seconds() + scaled as u32;
+        } else {
+            return last_step.arrival.epoch_seconds();
+        }
+    }
+
+    fn pick_best_itineraries(
+        &self,
+        context: &RouterContext<'a, T>,
+        target_costs: &[(usize, u32)],
+    ) -> Vec<InternalItinerary> {
+        let mut itineraries = HashSet::new();
+
+        let walking_scalars = [0.5, 1.0, 2.0];
+        for round in 0..=context.round {
+            for walking_scalar in walking_scalars {
+                if let Some((itinerary, _)) = target_costs
+                    .iter()
+                    .filter_map(|(target_id, cost)| {
+                        context.best_times_per_round[round as usize][*target_id]
+                            .as_ref()
+                            .map(|it| (it, *cost as f64 * walking_scalar))
+                    })
+                    .min_by_key(|(it, cost)| {
+                        self.cost_scaling_final_transfer(context, *it, walking_scalar)
+                            + *cost as u32
+                    })
+                {
+                    itineraries.insert(itinerary.clone());
+                }
+            }
+        }
+
+        itineraries.into_iter().collect()
     }
 
     fn clip_shape(&'a self, step: &InternalStep) -> Option<String> {
@@ -460,7 +528,7 @@ struct InternalStep<'a> {
     trip: Option<Trip>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
 struct InternalItinerary {
     last_step: usize,
     final_time: Time,

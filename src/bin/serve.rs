@@ -18,7 +18,7 @@ async fn plan(
     let from = LatLng::from_degrees(request.0.from.lat, request.0.from.lon);
     let to = LatLng::from_degrees(request.0.to.lat, request.0.to.lon);
 
-    let max_transfers = usize::min(10, request.0.max_transfers.0);
+    let max_transfers = usize::min(5, request.0.max_transfers.0);
 
     return Json(
         router
@@ -26,8 +26,8 @@ async fn plan(
                 Time::from_epoch_seconds(request.0.start_at.unix_timestamp() as u32),
                 from,
                 to,
-                Some(5000f64),
-                Some(20),
+                Some(1500f64),
+                Some(1000),
                 Some(max_transfers),
                 Some(2),
             )
