@@ -16,7 +16,7 @@ struct Args {
 
 async fn download_dmfr(path: PathBuf, zip_dir: PathBuf) -> Result<(), anyhow::Error> {
     let client = Client::builder()
-        .timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(5))
         .build()
         .unwrap();
     debug!("Enumerating feeds from {:?}", &path);
@@ -39,7 +39,7 @@ async fn download_dmfr(path: PathBuf, zip_dir: PathBuf) -> Result<(), anyhow::Er
     Ok(())
 }
 
-#[tokio::main(worker_threads = 8)]
+#[tokio::main(worker_threads = 16)]
 async fn main() -> Result<(), anyhow::Error> {
     env_logger::init();
     let args = Args::parse();
