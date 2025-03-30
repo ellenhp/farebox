@@ -174,6 +174,9 @@ impl TripInternal {
             .stop_times
             .first()
             .map(|stop_time| stop_time.departure_time)??;
+        if first_departure_time == u32::MAX {
+            return None;
+        }
         Some(
             self.service_day_start
                 .checked_add_signed(TimeDelta::seconds(first_departure_time as i64))
