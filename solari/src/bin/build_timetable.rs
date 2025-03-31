@@ -6,12 +6,12 @@ use std::{
 
 use anyhow::bail;
 use clap::Parser;
-use farebox::raptor::timetable::{in_memory::InMemoryTimetableBuilder, mmap::MmapTimetable};
+use solari::raptor::timetable::{in_memory::InMemoryTimetableBuilder, mmap::MmapTimetable};
 use gtfs_structures::GtfsReader;
 use log::debug;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
-extern crate farebox;
+extern crate solari;
 
 #[derive(Parser)]
 struct BuildArgs {

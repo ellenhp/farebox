@@ -1,7 +1,7 @@
 use std::{ffi::OsString, path::PathBuf, str::FromStr, time::Duration};
 
 use clap::Parser;
-use farebox::dmfr::DistributedMobilityFeedRegistry;
+use solari::dmfr::DistributedMobilityFeedRegistry;
 use log::{debug, info};
 use reqwest::Client;
 use tokio::{fs, spawn};
