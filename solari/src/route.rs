@@ -14,8 +14,8 @@ use time::OffsetDateTime;
 
 use crate::{
     api::{
-        response::{FareboxResponse, ResponseStatus},
-        FareboxItinerary, FareboxLeg,
+        response::{SolariResponse, ResponseStatus},
+        SolariItinerary, SolariLeg,
     },
     raptor::{
         geomath::{EARTH_RADIUS_APPROX, FAKE_WALK_SPEED_SECONDS_PER_METER},
@@ -81,7 +81,7 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
         max_candidate_stops_each_side: Option<usize>,
         max_transfers: Option<usize>,
         max_transfer_delta: Option<usize>,
-    ) -> FareboxResponse {
+    ) -> SolariResponse {
         let start_stops = self.nearest_stops(
             start_location,
             max_candidate_stops_each_side,
@@ -190,7 +190,7 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
             })
             .collect();
 
-        FareboxResponse {
+        SolariResponse {
             status: ResponseStatus::Ok,
             itineraries: best_itineraries,
         }
@@ -204,7 +204,7 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
         target_costs: &[(usize, u32)],
         start_location: LatLng,
         target_location: LatLng,
-    ) -> FareboxItinerary {
+    ) -> SolariItinerary {
         let mut steps = vec![];
         let mut step_cursor = itinerary.last_step;
         {
@@ -302,7 +302,7 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
             .iter()
             .rev()
             .filter_map(|(step, _)| match step {
-                Step::Trip(trip) => Some(FareboxLeg::Transit {
+                Step::Trip(trip) => Some(SolariLeg::Transit {
                     start_time: OffsetDateTime::from_unix_timestamp(
                         trip.departure_epoch_seconds as i64,
                     )
@@ -325,7 +325,7 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
                     transit_agency: trip.agency.clone(),
                     route_shape: trip.shape.clone(),
                 }),
-                Step::Transfer(transfer) => Some(FareboxLeg::Transfer {
+                Step::Transfer(transfer) => Some(SolariLeg::Transfer {
                     start_time: OffsetDateTime::from_unix_timestamp(
                         transfer.departure_epoch_seconds as i64,
                     )
@@ -348,7 +348,7 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        FareboxItinerary {
+        SolariItinerary {
             start_location: crate::api::LatLng {
                 lat: start_location.lat.deg(),
                 lon: start_location.lng.deg(),

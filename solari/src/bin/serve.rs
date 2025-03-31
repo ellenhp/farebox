@@ -1,6 +1,6 @@
 use clap::Parser;
-use farebox::{
-    api::{request::FareboxRequest, response::FareboxResponse},
+use solari::{
+    api::{request::SolariRequest, response::SolariResponse},
     raptor::timetable::{mmap::MmapTimetable, Time},
     route::Router,
 };
@@ -12,9 +12,9 @@ extern crate rocket;
 
 #[post("/v1/plan", data = "<request>")]
 async fn plan(
-    request: Json<FareboxRequest>,
+    request: Json<SolariRequest>,
     router: &State<Router<'_, MmapTimetable<'_>>>,
-) -> Json<FareboxResponse> {
+) -> Json<SolariResponse> {
     let from = LatLng::from_degrees(request.0.from.lat, request.0.from.lon);
     let to = LatLng::from_degrees(request.0.to.lat, request.0.to.lon);
 

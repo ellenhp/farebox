@@ -13,7 +13,7 @@ pub struct LatLng {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub enum FareboxLeg {
+pub enum SolariLeg {
     #[serde(rename = "transit")]
     Transit {
         #[serde(
@@ -51,7 +51,7 @@ pub enum FareboxLeg {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct FareboxItinerary {
+pub struct SolariItinerary {
     pub start_location: LatLng,
     pub end_location: LatLng,
     #[serde(
@@ -64,5 +64,5 @@ pub struct FareboxItinerary {
         deserialize_with = "time::serde::timestamp::milliseconds::deserialize"
     )]
     pub end_time: OffsetDateTime,
-    pub legs: Vec<FareboxLeg>,
+    pub legs: Vec<SolariLeg>,
 }

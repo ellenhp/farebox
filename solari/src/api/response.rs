@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::FareboxItinerary;
+use super::SolariItinerary;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum ResponseStatus {
@@ -15,7 +15,7 @@ pub enum ResponseStatus {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct FareboxResponse {
+pub struct SolariResponse {
     pub status: ResponseStatus,
-    pub itineraries: Vec<FareboxItinerary>,
+    pub itineraries: Vec<SolariItinerary>,
 }

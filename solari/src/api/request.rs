@@ -29,7 +29,7 @@ impl Default for TransferQuantity {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct FareboxRequest {
+pub struct SolariRequest {
     pub from: LatLng,
     pub to: LatLng,
     #[serde(

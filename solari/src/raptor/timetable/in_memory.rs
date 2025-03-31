@@ -258,7 +258,7 @@ impl<'a> InMemoryTimetableBuilder {
         gtfs: &Gtfs,
         trip: &gtfs_structures::Trip,
     ) -> &'a mut RouteData {
-        // Farebox defines a "route" as something distinct from a GTFS route, because in GTFS there's no guarantee that a route always has the same stops in the same order. In fact, for bidirectional lines, the same route is usually used for trips in both directions, which violates RAPTOR's assumptions. To deal with this, we define a "route" as a set of trips that all visit the same stops in the same order and have the same GTFS route ID in the same GTFS feed.
+        // Solari defines a "route" as something distinct from a GTFS route, because in GTFS there's no guarantee that a route always has the same stops in the same order. In fact, for bidirectional lines, the same route is usually used for trips in both directions, which violates RAPTOR's assumptions. To deal with this, we define a "route" as a set of trips that all visit the same stops in the same order and have the same GTFS route ID in the same GTFS feed.
         let trip_stop_ids: Vec<String> = trip
             .stop_times
             .iter()

@@ -808,43 +808,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "farebox"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "approx 0.5.1",
- "bit-set",
- "bytemuck",
- "chrono",
- "chrono-tz",
- "clap",
- "env_logger",
- "flatdata",
- "futures",
- "geo",
- "geo-types",
- "gtfs-structures",
- "log",
- "memmap2 0.9.5",
- "polyline",
- "rayon",
- "redb",
- "regress",
- "reqwest 0.11.27",
- "rmp-serde",
- "rocket",
- "rstar",
- "s2",
- "serde",
- "serde_json",
- "tempdir",
- "thiserror 1.0.69",
- "time",
- "tokio",
- "valhalla-graphtile",
-]
-
-[[package]]
 name = "fastrand"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2940,6 +2903,43 @@ checksum = "4f5fd57c80058a56cf5c777ab8a126398ece8e442983605d280a44ce79d0edef"
 dependencies = [
  "libc",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "solari"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "approx 0.5.1",
+ "bit-set",
+ "bytemuck",
+ "chrono",
+ "chrono-tz",
+ "clap",
+ "env_logger",
+ "flatdata",
+ "futures",
+ "geo",
+ "geo-types",
+ "gtfs-structures",
+ "log",
+ "memmap2 0.9.5",
+ "polyline",
+ "rayon",
+ "redb",
+ "regress",
+ "reqwest 0.11.27",
+ "rmp-serde",
+ "rocket",
+ "rstar",
+ "s2",
+ "serde",
+ "serde_json",
+ "tempdir",
+ "thiserror 1.0.69",
+ "time",
+ "tokio",
+ "valhalla-graphtile",
 ]
 
 [[package]]
