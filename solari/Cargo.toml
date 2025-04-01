@@ -9,7 +9,9 @@ edition = "2021"
 enforce_invariants = []
 
 [dependencies]
-anyhow = "1.0.71"
+solari-geomath = { path = "../solari-geomath" }
+
+anyhow = "1.0"
 chrono = "0.4.24"
 chrono-tz = "0.10.0"
 clap = { version = "4.3.0", features = ["derive"] }
@@ -17,11 +19,10 @@ env_logger = "0.10.0"
 gtfs-structures = "0.43.0"
 log = "0.4.17"
 reqwest = "0.11.18"
-rstar = { version = "0.12.2", features = ["serde"] }
+rstar = { version = "0.12", features = ["serde"] }
 s2 = "0.0.12"
 thiserror = "1.0.40"
 tokio = { version = "1", features = ["full"] }
-approx = "0.5.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.96"
 flatdata = "0.5.3"
@@ -35,11 +36,9 @@ futures = "0.3.31"
 rayon = "1.10.0"
 time = { version = "0.3.41", features = ["serde"] }
 polyline = "0.11.0"
-geo-types = "0.7.16"
+geo-types = "0.7"
 geo = "0.29"
 regress = "0.10.3"
-valhalla-graphtile = { git = "https://github.com/stadiamaps/valinor", rev = "8e34e84", features = ["serde"] }
-bit-set = "0.8.0"
 
 [build-dependencies]
 flatdata = "0.5.3"

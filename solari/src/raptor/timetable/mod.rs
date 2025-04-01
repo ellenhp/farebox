@@ -12,7 +12,7 @@ use rstar::RTree;
 use s2::latlng::LatLng;
 use serde::{Deserialize, Serialize};
 
-use super::geomath::IndexedStop;
+use crate::spatial::IndexedStop;
 
 static DAY_SECONDS: u32 = 86_400;
 const STOP_METADATA_TABLE: TableDefinition<u64, &[u8]> = TableDefinition::new("stop_metadata");

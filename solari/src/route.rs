@@ -10,17 +10,16 @@ use log::debug;
 use reqwest::Client;
 use s2::latlng::LatLng;
 use serde::Serialize;
+use solari_geomath::EARTH_RADIUS_APPROX;
 use time::OffsetDateTime;
 
 use crate::{
     api::{
-        response::{SolariResponse, ResponseStatus},
+        response::{ResponseStatus, SolariResponse},
         SolariItinerary, SolariLeg,
     },
-    raptor::{
-        geomath::{EARTH_RADIUS_APPROX, FAKE_WALK_SPEED_SECONDS_PER_METER},
-        timetable::TripStopTime,
-    },
+    raptor::timetable::TripStopTime,
+    spatial::FAKE_WALK_SPEED_SECONDS_PER_METER,
     valhalla::{matrix_request, MatrixRequest, ValhallaLocation},
 };
 

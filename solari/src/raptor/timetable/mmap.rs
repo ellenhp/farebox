@@ -15,11 +15,10 @@ use redb::Database;
 use reqwest::Client;
 use rstar::RTree;
 use s2::latlng::LatLng;
+use solari_geomath::{lat_lng_to_cartesian, EARTH_RADIUS_APPROX};
 
 use crate::{
-    raptor::geomath::{
-        lat_lng_to_cartesian, IndexedStop, EARTH_RADIUS_APPROX, FAKE_WALK_SPEED_SECONDS_PER_METER,
-    },
+    spatial::{IndexedStop, FAKE_WALK_SPEED_SECONDS_PER_METER},
     valhalla::{matrix_request, MatrixRequest, ValhallaLocation},
 };
 

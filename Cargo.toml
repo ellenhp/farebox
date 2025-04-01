@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["solari"]
+members = ["solari", "solari-geomath", "solari-spatial", "solari-transfers"]
 
 [profile.release-debug]
 inherits = "release"
