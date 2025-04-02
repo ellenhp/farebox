@@ -1,34 +1,33 @@
 use geo::LineString;
-use valhalla_graphtile::graph_tile::{DirectedEdge, GraphTile};
-use valhalla_graphtile::{GraphId, RoadClass};
+use valhalla_graphtile::{
+    GraphId,
+    graph_tile::{DirectedEdge, NodeInfo},
+};
 
-// TODO: Do we need this?
-pub struct EdgePointer<'a> {
-    pub graph_id: GraphId,
-    pub tile: &'a GraphTile<'a>,
-}
-
-impl EdgePointer<'_> {
-    pub(crate) fn edge(&self) -> &DirectedEdge {
-        self.tile
-            .get_directed_edge(&self.graph_id)
-            .expect("That wasn't supposed to happen...")
-    }
-}
-
-pub struct EdgeRecord {
+pub struct EdgeRecord<'a> {
+    start_node: GraphId,
     geometry: LineString,
-    road_class: RoadClass,
     edge: GraphId,
+    directed_edge: &'a DirectedEdge,
 }
 
-impl EdgeRecord {
-    pub fn new(geometry: LineString, road_class: RoadClass, edge: GraphId) -> EdgeRecord {
+impl<'a> EdgeRecord<'a> {
+    pub fn new(
+        start_node: GraphId,
+        geometry: LineString,
+        edge: GraphId,
+        directed_edge: &'a DirectedEdge,
+    ) -> EdgeRecord<'a> {
         EdgeRecord {
+            start_node,
             geometry,
-            road_class,
             edge,
+            directed_edge,
         }
+    }
+
+    pub fn start_node(&self) -> &GraphId {
+        &self.start_node
     }
 
     pub fn geometry(&self) -> &LineString {
@@ -37,5 +36,27 @@ impl EdgeRecord {
 
     pub fn id(&self) -> GraphId {
         self.edge
+    }
+
+    pub fn directed_edge(&'a self) -> &'a DirectedEdge {
+        self.directed_edge
+    }
+}
+pub struct NodeRecord<'a> {
+    id: GraphId,
+    node_info: &'a NodeInfo,
+}
+
+impl<'a> NodeRecord<'a> {
+    pub fn new(id: GraphId, node_info: &'a NodeInfo) -> NodeRecord<'a> {
+        NodeRecord { id, node_info }
+    }
+
+    pub fn id(&'a self) -> &'a GraphId {
+        &self.id
+    }
+
+    pub fn node_info(&'a self) -> &'a NodeInfo {
+        self.node_info
     }
 }

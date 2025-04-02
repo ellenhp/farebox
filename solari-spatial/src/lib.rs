@@ -81,12 +81,31 @@ impl<D: Archive> SphereIndex<D> {
             })
             .collect::<Vec<_>>();
     }
+
+    pub fn build(mut points: Vec<IndexedPoint<D>>) -> SphereIndex<D> {
+        points.sort_unstable_by_key(|point| point.cell);
+        SphereIndex {
+            index: points,
+            coverage_calculator: OnceCell::new(),
+        }
+    }
 }
 
 #[derive(Archive)]
-struct IndexedPoint<D: Archive> {
+pub struct IndexedPoint<D: Archive> {
     cell: u64,
     data: D,
+}
+
+impl<D: Archive> IndexedPoint<D> {
+    pub fn new(coord: &Coord, data: D) -> IndexedPoint<D> {
+        let lat_lng = LatLng::from_degrees(coord.y, coord.x);
+        let cell_id: CellID = lat_lng.into();
+        IndexedPoint {
+            cell: cell_id.0,
+            data,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, PartialOrd)]

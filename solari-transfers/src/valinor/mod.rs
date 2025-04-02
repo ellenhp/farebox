@@ -1,53 +1,54 @@
 mod export_edges;
 
-use std::{path::PathBuf, sync::RwLock};
+use std::{collections::HashMap, path::PathBuf, sync::RwLock};
 
 use export_edges::edge_export::enumerate_edges;
-use rstar::{AABB, PointDistance, RTreeObject};
-use serde::{Deserialize, Serialize};
-use solari_geomath::lat_lng_to_cartesian;
+use fast_paths::{FastGraph, FastGraphBuilder, InputGraph};
+use geo::{Geodesic, Length};
+use rkyv::Archive;
+use solari_spatial::{IndexedPoint, SphereIndex};
+use valhalla_graphtile::{Access, GraphId};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TileNode {
-    coords: [f64; 3],
-    id: u64,
+#[derive(Archive)]
+pub struct TransferGraph {
+    node_index: SphereIndex<u64>,
+    graph: FastGraph,
 }
 
-impl RTreeObject for TileNode {
-    type Envelope = AABB<[f64; 3]>;
-
-    fn envelope(&self) -> Self::Envelope {
-        AABB::from_point([self.coords[0], self.coords[1], self.coords[2]])
-    }
-}
-
-impl PointDistance for TileNode {
-    fn distance_2(
-        &self,
-        point: &<Self::Envelope as rstar::Envelope>::Point,
-    ) -> <<Self::Envelope as rstar::Envelope>::Point as rstar::Point>::Scalar {
-        (self.coords[0] - point[0]).powi(2)
-            + (self.coords[1] - point[1]).powi(2)
-            + (self.coords[2] - point[2]).powi(2)
-    }
-}
-
-pub struct ValhallaGeometry {
-    rtree: rstar::RTree<TileNode>,
-}
-
-impl ValhallaGeometry {
-    pub fn new(valhalla_tile_dir: PathBuf) -> Result<ValhallaGeometry, anyhow::Error> {
+impl TransferGraph {
+    pub fn new(valhalla_tile_dir: PathBuf) -> Result<TransferGraph, anyhow::Error> {
         let mut geometry = RwLock::new(Vec::new());
-        enumerate_edges(valhalla_tile_dir, |edge| {
-            for node in &edge.geometry().0 {
-                geometry.get_mut().unwrap().push(TileNode {
-                    coords: lat_lng_to_cartesian(node.y, node.x),
-                    id: edge.id().value(),
-                })
+        let mut node_map = RwLock::new(HashMap::<GraphId, usize>::new());
+        let mut next_node = RwLock::new(0usize);
+        let mut graph = RwLock::new(InputGraph::new());
+        enumerate_edges(valhalla_tile_dir, |node, edges| {
+            if !node.node_info().access().contains(Access::Pedestrian) {
+                return;
+            }
+            let next_node = next_node.get_mut().unwrap();
+            node_map.get_mut().unwrap().insert(*node.id(), *next_node);
+            *next_node += 1;
+            for edge in edges {
+                let edge_id = edge.id().value();
+                for node in &edge.geometry().0 {
+                    geometry
+                        .get_mut()
+                        .unwrap()
+                        .push(IndexedPoint::new(node, edge_id));
+                }
+                let start_node = node_map.get_mut().unwrap()[edge.start_node()];
+                let end_node = node_map.get_mut().unwrap()[&edge.directed_edge().end_node_id()];
+                let length_meters = edge.geometry().length::<Geodesic>();
+                let weight = length_meters / 1.4 * 1000.0; // Milliseconds.
+                graph
+                    .get_mut()
+                    .unwrap()
+                    .add_edge(start_node, end_node, weight as usize);
             }
         })?;
-        let rtree = rstar::RTree::bulk_load(geometry.into_inner()?);
-        Ok(ValhallaGeometry { rtree })
+        let node_index = SphereIndex::build(geometry.into_inner().expect("Lock failed"));
+        let graph = graph.into_inner().expect("Lock failed");
+        let graph = FastGraphBuilder::build(&graph);
+        Ok(TransferGraph { node_index, graph })
     }
 }

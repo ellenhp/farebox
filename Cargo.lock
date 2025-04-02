@@ -831,6 +831,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fast_paths"
+version = "1.0.0"
+source = "git+https://github.com/ellenhp/fast_paths?rev=8159117#8159117b858afed5ae7a3b9b012a17cf7ec7bece"
+dependencies = [
+ "log",
+ "priority-queue",
+ "rkyv",
+ "serde",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2212,6 +2223,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "priority-queue"
+version = "2.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef08705fa1589a1a59aa924ad77d14722cb0cd97b67dd5004ed5f4a4873fce8d"
+dependencies = [
+ "autocfg",
+ "equivalent",
+ "indexmap",
+]
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.94"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3081,11 +3103,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bit-set",
+ "fast_paths",
  "geo",
  "geo-types",
- "rstar",
+ "rkyv",
  "serde",
  "solari-geomath",
+ "solari-spatial",
  "valhalla-graphtile",
 ]
 
