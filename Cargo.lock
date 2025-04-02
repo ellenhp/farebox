@@ -833,11 +833,11 @@ dependencies = [
 [[package]]
 name = "fast_paths"
 version = "1.0.0"
-source = "git+https://github.com/ellenhp/fast_paths?rev=8159117#8159117b858afed5ae7a3b9b012a17cf7ec7bece"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c81c255f345762d8303062464a32cc862c2e1eb1b55fa9f90df74b59eea9c8da"
 dependencies = [
  "log",
  "priority-queue",
- "rkyv",
  "serde",
 ]
 
@@ -3073,6 +3073,7 @@ dependencies = [
  "serde",
  "serde_json",
  "solari-geomath",
+ "solari-transfers",
  "tempdir",
  "thiserror 1.0.69",
  "time",
@@ -3090,6 +3091,7 @@ dependencies = [
 name = "solari-spatial"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "geo",
  "geo-types",
  "rkyv",
@@ -3106,6 +3108,7 @@ dependencies = [
  "fast_paths",
  "geo",
  "geo-types",
+ "log",
  "rkyv",
  "serde",
  "solari-geomath",

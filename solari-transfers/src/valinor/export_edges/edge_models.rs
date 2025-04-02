@@ -5,37 +5,20 @@ use valhalla_graphtile::{
 };
 
 pub struct EdgeRecord<'a> {
-    start_node: GraphId,
     geometry: LineString,
-    edge: GraphId,
     directed_edge: &'a DirectedEdge,
 }
 
 impl<'a> EdgeRecord<'a> {
-    pub fn new(
-        start_node: GraphId,
-        geometry: LineString,
-        edge: GraphId,
-        directed_edge: &'a DirectedEdge,
-    ) -> EdgeRecord<'a> {
+    pub fn new(geometry: LineString, directed_edge: &'a DirectedEdge) -> EdgeRecord<'a> {
         EdgeRecord {
-            start_node,
             geometry,
-            edge,
             directed_edge,
         }
     }
 
-    pub fn start_node(&self) -> &GraphId {
-        &self.start_node
-    }
-
     pub fn geometry(&self) -> &LineString {
         &self.geometry
-    }
-
-    pub fn id(&self) -> GraphId {
-        self.edge
     }
 
     pub fn directed_edge(&'a self) -> &'a DirectedEdge {

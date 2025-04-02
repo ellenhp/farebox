@@ -9,18 +9,16 @@ use std::{
 
 use anyhow::{Error, Ok};
 use bytemuck::{cast_slice_mut, checked::cast_slice};
-use log::{debug, info, warn};
+use geo::Coord;
+use log::{debug, info};
 use memmap2::{Mmap, MmapMut, MmapOptions};
 use redb::Database;
-use reqwest::Client;
 use rstar::RTree;
 use s2::latlng::LatLng;
-use solari_geomath::{lat_lng_to_cartesian, EARTH_RADIUS_APPROX};
+use solari_geomath::lat_lng_to_cartesian;
+use solari_transfers::valinor::TransferGraph;
 
-use crate::{
-    spatial::{IndexedStop, FAKE_WALK_SPEED_SECONDS_PER_METER},
-    valhalla::{matrix_request, MatrixRequest, ValhallaLocation},
-};
+use crate::spatial::{IndexedStop, WALK_SPEED_MM_PER_SECOND};
 
 use super::{
     in_memory::InMemoryTimetableBuilder, Route, RouteStop, ShapeCoordinate, Stop, StopRoute,
@@ -54,9 +52,6 @@ pub struct MmapTimetable<'a> {
     metadata_db: redb::Database,
 
     phantom: &'a PhantomData<()>,
-
-    // reqwest client.
-    client: Client,
 }
 
 impl<'a> Timetable<'a> for MmapTimetable<'a> {
@@ -252,7 +247,6 @@ impl<'a> MmapTimetable<'a> {
             backing_transfer_index,
             backing_transfers,
             phantom: &PhantomData,
-            client: reqwest::Client::new(),
 
             rtree,
             routes_slice: routes,
@@ -439,7 +433,7 @@ impl<'a> MmapTimetable<'a> {
     pub async fn concatenate<'b>(
         timetables: &[MmapTimetable<'b>],
         base_path: &PathBuf,
-        valhalla_endpoint: Option<String>,
+        valhalla_tile_path: &PathBuf,
     ) -> MmapTimetable<'b> {
         {
             let total_routes: usize = timetables.iter().map(|tt| tt.routes().len()).sum();
@@ -646,13 +640,13 @@ impl<'a> MmapTimetable<'a> {
             }
         }
         let mut tt = MmapTimetable::open(base_path).unwrap();
-        tt.calculate_transfers(valhalla_endpoint).await.unwrap();
+        tt.calculate_transfers(valhalla_tile_path).await.unwrap();
         tt
     }
 
     pub(crate) async fn calculate_transfers(
         &mut self,
-        valhalla_endpoint: Option<String>,
+        valhalla_tile_path: &PathBuf,
     ) -> Result<(), Error> {
         {
             let mut rtree = RTree::<IndexedStop>::new();
@@ -669,19 +663,20 @@ impl<'a> MmapTimetable<'a> {
         }
         assert_eq!(self.stops().len(), self.rtree.size());
 
-        debug!("Calculating transfer times");
+        info!("Building contraction hierarchy from Valhalla tiles");
+        let mut transfer_graph = TransferGraph::new(valhalla_tile_path)?;
+        info!("Built contraction hierarchy");
+
+        info!("Calculating transfer times");
         let transfers = {
             let transfers: Vec<_> = self
                 .stops()
                 .iter()
-                .map(|from_stop| async {
-                    self.calculate_transfer_matrix(from_stop, valhalla_endpoint.clone())
-                        .await
-                })
+                .map(|from_stop| self.calculate_transfer_matrix(&mut transfer_graph, from_stop))
                 .collect();
             let mut awaited_transfers = vec![];
             for transfer in transfers {
-                awaited_transfers.push(transfer.await);
+                awaited_transfers.push(transfer);
             }
             awaited_transfers
         };
@@ -744,9 +739,7 @@ impl<'a> MmapTimetable<'a> {
             .enumerate()
         {
             let dist = dist_sq.sqrt();
-            if dist > 5000f64 {
-                break;
-            } else if dist > 3000f64 && count > 50 {
+            if dist > 1000f64 || count > 20 {
                 break;
             }
             transfer_candidates.push(self.stop(to_stop.id));
@@ -754,87 +747,30 @@ impl<'a> MmapTimetable<'a> {
         transfer_candidates
     }
 
-    /// Calculate the transfer matrix using the given valhalla endpoint.
-    async fn valhalla_transfer_matrix(
-        &self,
-        stop: &Stop,
-        transfer_candidates: Vec<&Stop>,
-        valhalla_endpoint: String,
-    ) -> Vec<Transfer> {
-        let latlng = stop.location();
-        let request = MatrixRequest {
-            sources: vec![ValhallaLocation {
-                lat: latlng.lat.deg(),
-                lon: latlng.lng.deg(),
-            }],
-            targets: transfer_candidates
-                .iter()
-                .map(|stop| ValhallaLocation {
-                    lat: stop.location().lat.deg(),
-                    lon: stop.location().lng.deg(),
-                })
-                .collect(),
-            costing: "pedestrian".to_string(),
-            matrix_locations: usize::max(transfer_candidates.len(), 25),
-        };
-        let transfer_matrix_response = matrix_request(&self.client, &valhalla_endpoint, request)
-            .await
-            .unwrap();
-
-        let mut line_items = vec![];
-
-        for line_item in &transfer_matrix_response.sources_to_targets[0] {
-            let to_index = if let Some(to_index) = line_item.to_index {
-                to_index
-            } else {
-                warn!("Invalid line item in valhalla response {:?}", line_item);
-                continue;
-            };
-            let time = if let Some(time) = line_item.time {
-                time
-            } else {
-                warn!("Invalid line item in valhalla response {:?}", line_item);
-                continue;
-            };
-
-            line_items.push(Transfer {
-                to: transfer_candidates[to_index].id(),
-                from: stop.id(),
-                time: time as u64,
-            });
-        }
-        line_items
-    }
-
-    fn fake_walk_speed_transfer_matrix(
-        &self,
-        stop: &Stop,
-        transfer_candidates: Vec<&Stop>,
-    ) -> Vec<Transfer> {
-        let latlng = stop.location();
+    fn calculate_transfer_matrix(&self, graph: &mut TransferGraph, stop: &Stop) -> Vec<Transfer> {
+        let transfer_candidates = self.generate_transfer_candidates(stop);
         transfer_candidates
             .iter()
-            .map(|to_stop| Transfer {
-                to: to_stop.id(),
-                from: stop.id(),
-                time: (FAKE_WALK_SPEED_SECONDS_PER_METER
-                    * latlng.distance(&to_stop.location()).rad()
-                    * EARTH_RADIUS_APPROX) as u64,
+            .filter_map(|to_stop| {
+                Some(Transfer {
+                    to: to_stop.id(),
+                    from: stop.id(),
+                    time: graph
+                        .transfer_distance_mm(
+                            &Self::location_to_coords(&stop.location()),
+                            &Self::location_to_coords(&to_stop.location()),
+                        )
+                        .ok()?
+                        / WALK_SPEED_MM_PER_SECOND,
+                })
             })
             .collect()
     }
 
-    async fn calculate_transfer_matrix(
-        &self,
-        stop: &Stop,
-        valhalla_endpoint: Option<String>,
-    ) -> Vec<Transfer> {
-        let transfer_candidates = self.generate_transfer_candidates(stop);
-        if let Some(valhalla_endpoint) = valhalla_endpoint {
-            self.valhalla_transfer_matrix(stop, transfer_candidates, valhalla_endpoint)
-                .await
-        } else {
-            self.fake_walk_speed_transfer_matrix(stop, transfer_candidates)
+    fn location_to_coords(location: &LatLng) -> Coord {
+        Coord {
+            x: location.lng.deg(),
+            y: location.lat.deg(),
         }
     }
 }

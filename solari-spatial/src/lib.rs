@@ -22,14 +22,13 @@ impl<D: Archive> SphereIndex<D> {
     pub fn nearest_neighbors<'a>(
         &'a self,
         coord: &Coord,
-        max_count: usize,
         max_radius_meters: f64,
     ) -> Vec<NearestNeighborResult<'a, D>> {
         let region_coverer = self.coverage_calculator.get_or_init(|| RegionCoverer {
-            min_level: 12,
-            max_level: 20,
+            min_level: 18,
+            max_level: 30,
             level_mod: 1,
-            max_cells: 20,
+            max_cells: 10,
         });
         // Prevent division by zero by clamping the cosine calculated later to this minimum value.
         let cos_epsilon = 0.0000001;
@@ -44,42 +43,41 @@ impl<D: Archive> SphereIndex<D> {
         let target_lat_lng = LatLng::from_degrees(coord.y, coord.x);
         let region = Rect::from_center_size(target_lat_lng, size);
         let covering = region_coverer.fast_covering(&region);
+        let mut covering = covering.0;
+        covering.sort_unstable_by_key(|cell_id| {
+            let cell: Cell = cell_id.into();
+            let angle = target_lat_lng.distance(&cell.center().into()).deg();
+            let meters = 111000.0 * angle;
+            meters as u32
+        });
         let mut neighbors = Vec::new();
-        for cell_id in &covering.0 {
+        for cell_id in &covering {
             let child_begin_index = match self
                 .index
                 .binary_search_by_key(&cell_id.child_begin().0, |point| point.cell)
             {
                 Ok(found) => found,
-                Err(not_found) => not_found,
+                Err(not_found) => not_found.saturating_sub(1),
             };
             let child_end_index = match self
                 .index
                 .binary_search_by_key(&cell_id.child_end().0, |point| point.cell)
             {
                 Ok(found) => found,
-                Err(not_found) => not_found,
+                Err(not_found) => not_found.saturating_sub(1),
             };
             for neighbor_index in child_begin_index..=child_end_index {
                 let neighbor_cell: Cell = CellID(self.index[neighbor_index].cell).into();
                 let neighbor_lat_lng: LatLng = neighbor_cell.center().into();
                 let approx_distance_meters =
                     neighbor_lat_lng.distance(&target_lat_lng).rad() * EARTH_RADIUS_APPROX;
-                neighbors.push(NearestNeighborResultInternal {
+                neighbors.push(NearestNeighborResult {
                     approx_distance_meters,
-                    index: neighbor_index,
+                    data: &self.index[neighbor_index].data,
                 });
             }
         }
-        neighbors.sort();
-        return neighbors
-            .iter()
-            .take(max_count)
-            .map(|result| NearestNeighborResult {
-                approx_distance_meters: result.approx_distance_meters,
-                data: &self.index[result.index].data,
-            })
-            .collect::<Vec<_>>();
+        neighbors
     }
 
     pub fn build(mut points: Vec<IndexedPoint<D>>) -> SphereIndex<D> {
@@ -105,21 +103,5 @@ impl<D: Archive> IndexedPoint<D> {
             cell: cell_id.0,
             data,
         }
-    }
-}
-
-#[derive(Debug, PartialEq, PartialOrd)]
-struct NearestNeighborResultInternal {
-    approx_distance_meters: f64,
-    index: usize,
-}
-
-impl Eq for NearestNeighborResultInternal {}
-
-impl Ord for NearestNeighborResultInternal {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.approx_distance_meters
-            .partial_cmp(&other.approx_distance_meters)
-            .unwrap()
     }
 }

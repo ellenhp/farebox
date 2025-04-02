@@ -1,5 +1,6 @@
 use crate::valinor::export_edges::edge_models::EdgeRecord;
 use bit_set::BitSet;
+use log::warn;
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
@@ -17,10 +18,10 @@ fn should_skip_edge(edge: &DirectedEdge) -> bool {
 }
 
 pub fn enumerate_edges<F: FnMut(NodeRecord, Vec<EdgeRecord>)>(
-    tile_path: PathBuf,
+    tile_path: &PathBuf,
     mut action: F,
 ) -> anyhow::Result<()> {
-    let reader = DirectoryTileProvider::new(tile_path, NonZeroUsize::new(25).unwrap());
+    let reader = DirectoryTileProvider::new(tile_path.clone(), NonZeroUsize::new(25).unwrap());
 
     let mut tile_set = HashMap::new();
     let mut node_count: usize = 0;
@@ -68,23 +69,34 @@ pub fn enumerate_edges<F: FnMut(NodeRecord, Vec<EdgeRecord>)>(
             processed_nodes.insert(*node_index_offset + index);
 
             let mut edges = Vec::new();
-            for outbound_edge_index in 0..node.local_edge_count() {
+            for outbound_edge_index in 0..node.edge_count() {
                 let outbound_edge_index = node.edge_index() + outbound_edge_index as u32;
-                let edge_id = tile_id.with_index(outbound_edge_index as u64)?;
-                let edge = tile.get_directed_edge(&edge_id)?;
+                let edge_id = if let Ok(id) = tile_id.with_index(outbound_edge_index as u64) {
+                    id
+                } else {
+                    warn!("Edge ID not constructed correctly");
+                    continue;
+                };
+                let edge = if let Ok(edge) = tile.get_directed_edge(&edge_id) {
+                    edge
+                } else {
+                    warn!("Directed edge not found");
+                    continue;
+                };
+
+                let edge_info = if let Ok(edge_info) = tile.get_edge_info(edge) {
+                    edge_info
+                } else {
+                    warn!("Edge info not found");
+                    continue;
+                };
 
                 // Skip certain edge types based on the config
-                let edge_info = tile.get_edge_info(edge)?;
                 if should_skip_edge(edge) {
                     continue;
                 }
 
-                edges.push(EdgeRecord::new(
-                    node_id,
-                    edge_info.shape()?.clone(),
-                    edge_id,
-                    edge,
-                ));
+                edges.push(EdgeRecord::new(edge_info.shape()?.clone(), edge));
             }
             action(NodeRecord::new(node_id, node), edges);
         }

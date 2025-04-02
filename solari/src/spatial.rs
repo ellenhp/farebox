@@ -2,6 +2,7 @@ use rstar::{PointDistance, RTreeObject, AABB};
 use serde::{Deserialize, Serialize};
 
 pub static FAKE_WALK_SPEED_SECONDS_PER_METER: f64 = 2.0;
+pub(crate) static WALK_SPEED_MM_PER_SECOND: u64 = 1400;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexedStop {
