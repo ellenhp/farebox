@@ -1,7 +1,5 @@
-use std::cell::OnceCell;
-
 use geo::Coord;
-use rkyv::{Archive, with::Skip};
+use rkyv::Archive;
 use s2::{cell::Cell, cellid::CellID, latlng::LatLng, rect::Rect, region::RegionCoverer, s1::Deg};
 use solari_geomath::EARTH_RADIUS_APPROX;
 
@@ -13,8 +11,6 @@ pub struct NearestNeighborResult<'a, D: Archive> {
 #[derive(Archive)]
 pub struct SphereIndex<D: Archive> {
     index: Vec<IndexedPoint<D>>,
-    #[rkyv(with = Skip)]
-    coverage_calculator: OnceCell<RegionCoverer>,
 }
 
 impl<D: Archive> SphereIndex<D> {
@@ -24,12 +20,12 @@ impl<D: Archive> SphereIndex<D> {
         coord: &Coord,
         max_radius_meters: f64,
     ) -> Vec<NearestNeighborResult<'a, D>> {
-        let region_coverer = self.coverage_calculator.get_or_init(|| RegionCoverer {
+        let region_coverer = RegionCoverer {
             min_level: 18,
             max_level: 30,
             level_mod: 1,
             max_cells: 10,
-        });
+        };
         // Prevent division by zero by clamping the cosine calculated later to this minimum value.
         let cos_epsilon = 0.0000001;
         let size = LatLng {
@@ -82,10 +78,7 @@ impl<D: Archive> SphereIndex<D> {
 
     pub fn build(mut points: Vec<IndexedPoint<D>>) -> SphereIndex<D> {
         points.sort_unstable_by_key(|point| point.cell);
-        SphereIndex {
-            index: points,
-            coverage_calculator: OnceCell::new(),
-        }
+        SphereIndex { index: points }
     }
 }
 

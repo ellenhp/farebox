@@ -12,11 +12,12 @@ use bytemuck::{cast_slice_mut, checked::cast_slice};
 use geo::Coord;
 use log::{debug, info};
 use memmap2::{Mmap, MmapMut, MmapOptions};
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use redb::Database;
 use rstar::RTree;
 use s2::latlng::LatLng;
 use solari_geomath::lat_lng_to_cartesian;
-use solari_transfers::valinor::TransferGraph;
+use solari_transfers::valinor::{TransferGraph, TransferGraphSearcher};
 
 use crate::spatial::{IndexedStop, WALK_SPEED_MM_PER_SECOND};
 
@@ -664,22 +665,20 @@ impl<'a> MmapTimetable<'a> {
         assert_eq!(self.stops().len(), self.rtree.size());
 
         info!("Building contraction hierarchy from Valhalla tiles");
-        let mut transfer_graph = TransferGraph::new(valhalla_tile_path)?;
+        let transfer_graph = TransferGraph::new(valhalla_tile_path)?;
         info!("Built contraction hierarchy");
 
         info!("Calculating transfer times");
-        let transfers = {
-            let transfers: Vec<_> = self
-                .stops()
-                .iter()
-                .map(|from_stop| self.calculate_transfer_matrix(&mut transfer_graph, from_stop))
-                .collect();
-            let mut awaited_transfers = vec![];
-            for transfer in transfers {
-                awaited_transfers.push(transfer);
-            }
-            awaited_transfers
-        };
+        let transfers: Vec<Vec<Transfer>> = self
+            .stops()
+            .par_iter()
+            .map_with(
+                TransferGraphSearcher::new(&transfer_graph),
+                |searcher, from_stop| {
+                    self.calculate_transfer_matrix(&transfer_graph, searcher, from_stop)
+                },
+            )
+            .collect();
 
         let transfer_index_file = File::options()
             .write(true)
@@ -747,7 +746,12 @@ impl<'a> MmapTimetable<'a> {
         transfer_candidates
     }
 
-    fn calculate_transfer_matrix(&self, graph: &mut TransferGraph, stop: &Stop) -> Vec<Transfer> {
+    fn calculate_transfer_matrix(
+        &self,
+        graph: &TransferGraph,
+        search_context: &mut TransferGraphSearcher,
+        stop: &Stop,
+    ) -> Vec<Transfer> {
         let transfer_candidates = self.generate_transfer_candidates(stop);
         transfer_candidates
             .iter()
@@ -757,6 +761,7 @@ impl<'a> MmapTimetable<'a> {
                     from: stop.id(),
                     time: graph
                         .transfer_distance_mm(
+                            search_context,
                             &Self::location_to_coords(&stop.location()),
                             &Self::location_to_coords(&to_stop.location()),
                         )

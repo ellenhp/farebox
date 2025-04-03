@@ -833,11 +833,11 @@ dependencies = [
 [[package]]
 name = "fast_paths"
 version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c81c255f345762d8303062464a32cc862c2e1eb1b55fa9f90df74b59eea9c8da"
+source = "git+https://github.com/ellenhp/fast_paths?rev=8159117#8159117b858afed5ae7a3b9b012a17cf7ec7bece"
 dependencies = [
  "log",
  "priority-queue",
+ "rkyv",
  "serde",
 ]
 

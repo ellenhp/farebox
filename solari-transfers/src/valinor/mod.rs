@@ -7,13 +7,14 @@ use export_edges::edge_export::enumerate_edges;
 use fast_paths::{FastGraph, FastGraphBuilder, InputGraph, PathCalculator, create_calculator};
 use geo::{Coord, Geodesic, Length};
 use log::info;
+use rkyv::Archive;
 use solari_spatial::{IndexedPoint, SphereIndex};
 use valhalla_graphtile::{Access, GraphId};
 
+#[derive(Archive)]
 pub struct TransferGraph {
     node_index: SphereIndex<usize>,
     graph: FastGraph,
-    calculator: PathCalculator,
 }
 
 impl TransferGraph {
@@ -80,24 +81,23 @@ impl TransferGraph {
         info!("Contracting");
         let graph = FastGraphBuilder::build(&graph);
 
-        Ok(TransferGraph {
-            node_index,
-            calculator: create_calculator(&graph),
-            graph,
-        })
+        Ok(TransferGraph { node_index, graph })
     }
 
-    pub fn transfer_distance_mm(&mut self, from: &Coord, to: &Coord) -> Result<u64, anyhow::Error> {
+    pub fn transfer_distance_mm(
+        &self,
+        search_context: &mut TransferGraphSearcher,
+        from: &Coord,
+        to: &Coord,
+    ) -> Result<u64, anyhow::Error> {
         let from = self.get_nearest_nodes(from);
         let to = self.get_nearest_nodes(to);
-        if let Some(path) =
-            self.calculator
-                .calc_path_multiple_sources_and_targets(&self.graph, from, to)
+        if let Some(path) = search_context
+            .calculator
+            .calc_path_multiple_sources_and_targets(&self.graph, from, to)
         {
-            // info!("Path: {}", path.get_weight());
             Ok(path.get_weight() as u64)
         } else {
-            // info!("No path");
             bail!("No route")
         }
     }
@@ -130,5 +130,28 @@ impl TransferGraph {
                 )
             })
             .collect()
+    }
+}
+
+pub struct TransferGraphSearcher<'a> {
+    calculator: PathCalculator,
+    graph: &'a TransferGraph,
+}
+
+impl<'a> TransferGraphSearcher<'a> {
+    pub fn new(graph: &'a TransferGraph) -> TransferGraphSearcher<'a> {
+        TransferGraphSearcher {
+            calculator: create_calculator(&graph.graph),
+            graph,
+        }
+    }
+}
+
+impl<'a> Clone for TransferGraphSearcher<'a> {
+    fn clone(&self) -> Self {
+        Self {
+            calculator: create_calculator(&self.graph.graph),
+            graph: self.graph,
+        }
     }
 }
