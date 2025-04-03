@@ -1,0 +1,12 @@
+[package]
+name = "solari-export-graph"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+solari-transfers = { path = "../solari-transfers" }
+clap = { version = "4.3.0", features = ["derive"] }
+env_logger = "0.10.0"
+log = "0.4"
+anyhow = "1.0"
+rkyv = "0.8.10"

@@ -833,11 +833,13 @@ dependencies = [
 [[package]]
 name = "fast_paths"
 version = "1.0.0"
-source = "git+https://github.com/ellenhp/fast_paths?rev=8159117#8159117b858afed5ae7a3b9b012a17cf7ec7bece"
+source = "git+https://github.com/ellenhp/fast_paths?rev=5b6d4c48f2613d75e566135f000b302be56b25e1#5b6d4c48f2613d75e566135f000b302be56b25e1"
 dependencies = [
+ "anyhow",
+ "bytemuck",
  "log",
+ "memmap2 0.9.5",
  "priority-queue",
- "rkyv",
  "serde",
 ]
 
@@ -3078,6 +3080,18 @@ dependencies = [
  "thiserror 1.0.69",
  "time",
  "tokio",
+]
+
+[[package]]
+name = "solari-export-graph"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "env_logger",
+ "log",
+ "rkyv",
+ "solari-transfers",
 ]
 
 [[package]]

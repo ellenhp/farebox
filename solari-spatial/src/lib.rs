@@ -1,5 +1,5 @@
 use geo::Coord;
-use rkyv::Archive;
+use rkyv::{Archive, Deserialize, Serialize};
 use s2::{cell::Cell, cellid::CellID, latlng::LatLng, rect::Rect, region::RegionCoverer, s1::Deg};
 use solari_geomath::EARTH_RADIUS_APPROX;
 
@@ -8,7 +8,7 @@ pub struct NearestNeighborResult<'a, D: Archive> {
     pub data: &'a D,
 }
 
-#[derive(Archive)]
+#[derive(Archive, Deserialize, Serialize)]
 pub struct SphereIndex<D: Archive> {
     index: Vec<IndexedPoint<D>>,
 }
@@ -82,7 +82,7 @@ impl<D: Archive> SphereIndex<D> {
     }
 }
 
-#[derive(Archive)]
+#[derive(Archive, Deserialize, Serialize)]
 pub struct IndexedPoint<D: Archive> {
     cell: u64,
     data: D,

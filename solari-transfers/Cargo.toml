@@ -8,7 +8,7 @@ solari-geomath = { path = "../solari-geomath" }
 solari-spatial = { path = "../solari-spatial" }
 
 valhalla-graphtile = { git = "https://github.com/stadiamaps/valinor", rev = "8e34e84", features = ["serde"] }
-fast_paths = { git = "https://github.com/ellenhp/fast_paths", rev = "8159117", features = ["rkyv"] }
+fast_paths = { git = "https://github.com/ellenhp/fast_paths", rev = "5b6d4c48f2613d75e566135f000b302be56b25e1" }
 bit-set = "0.8.0"
 anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
