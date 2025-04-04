@@ -1,26 +1,30 @@
 mod export_edges;
 
-use std::{collections::HashMap, fs::File, path::PathBuf, sync::RwLock};
+use std::{collections::HashMap, fs::File, path::PathBuf, pin::Pin, sync::RwLock};
 
 use anyhow::bail;
 use export_edges::edge_export::enumerate_edges;
 use fast_paths::{
-    FastGraph, FastGraphBuilder, FastGraphVec, InputGraph, PathCalculator, create_calculator,
+    FastGraph, FastGraphBuilder, FastGraphStatic, FastGraphVec, InputGraph, PathCalculator,
+    create_calculator,
 };
 use geo::{Coord, Geodesic, Length};
 use log::info;
-use rkyv::{Archive, Deserialize, Serialize, rancor, ser::writer::IoWriter};
-use solari_spatial::{IndexedPoint, SphereIndex};
+use memmap2::MmapOptions;
+use rkyv::{Archive, Deserialize, Serialize};
+use solari_spatial::{IndexedPoint, SphereIndex, SphereIndexMmap, SphereIndexVec};
 use valhalla_graphtile::{Access, GraphId};
 
 #[derive(Archive, Deserialize, Serialize)]
-pub struct TransferGraph<G: FastGraph> {
-    node_index: SphereIndex<usize>,
+pub struct TransferGraph<G: FastGraph, I: SphereIndex<usize>> {
+    node_index: I,
     graph: G,
 }
 
-impl<G: FastGraph> TransferGraph<G> {
-    pub fn new(valhalla_tile_dir: &PathBuf) -> Result<TransferGraph<FastGraphVec>, anyhow::Error> {
+impl<G: FastGraph, I: SphereIndex<usize>> TransferGraph<G, I> {
+    pub fn new(
+        valhalla_tile_dir: &PathBuf,
+    ) -> Result<TransferGraph<FastGraphVec, SphereIndexVec<usize>>, anyhow::Error> {
         let mut geometry = RwLock::new(Vec::new());
         let mut node_map = RwLock::new(HashMap::<GraphId, usize>::new());
         let mut next_node = RwLock::new(0usize);
@@ -76,7 +80,7 @@ impl<G: FastGraph> TransferGraph<G> {
                 }
             }
         })?;
-        let node_index = SphereIndex::build(geometry.into_inner().expect("Lock failed"));
+        let node_index = SphereIndexVec::build(geometry.into_inner().expect("Lock failed"));
         let mut graph = graph.into_inner().expect("Lock failed");
         info!("Freezing graph");
         graph.freeze();
@@ -88,18 +92,29 @@ impl<G: FastGraph> TransferGraph<G> {
 
     pub fn save_to_dir(&self, dir: PathBuf) -> Result<(), anyhow::Error> {
         self.graph.save_static(dir.join("transfer_graph.bin"))?;
-        let file = File::create(dir.join("transfer_graph_node_idx.rkyv"))?;
-        let writer = IoWriter::new(file);
-        rkyv::api::high::to_bytes_in::<IoWriter<File>, rancor::BoxedError>(
-            &self.node_index,
-            writer,
-        )?;
+        self.node_index
+            .write_to_file(dir.join("transfer_node_index.bin"))?;
         Ok(())
+    }
+
+    pub fn read_from_dir<'a>(
+        dir: PathBuf,
+    ) -> Result<TransferGraph<FastGraphStatic<'a>, SphereIndexMmap<'a, usize>>, anyhow::Error> {
+        let graph_file = File::open(dir.join("transfer_graph.bin"))?;
+        let graph_mmap = unsafe { MmapOptions::new().map(&graph_file)? };
+        let graph = FastGraphStatic::assemble(Pin::new(graph_mmap))?;
+
+        let index_file = File::open(dir.join("transfer_node_index.bin"))?;
+        let index_mmap = unsafe { MmapOptions::new().map(&index_file)? };
+        let node_index: SphereIndexMmap<'_, usize> =
+            SphereIndexMmap::assemble(Pin::new(index_mmap))?;
+
+        Ok(TransferGraph { graph, node_index })
     }
 
     pub fn transfer_distance_mm(
         &self,
-        search_context: &mut TransferGraphSearcher<G>,
+        search_context: &mut TransferGraphSearcher<G, I>,
         from: &Coord,
         to: &Coord,
     ) -> Result<u64, anyhow::Error> {
@@ -146,13 +161,13 @@ impl<G: FastGraph> TransferGraph<G> {
     }
 }
 
-pub struct TransferGraphSearcher<'a, G: FastGraph> {
+pub struct TransferGraphSearcher<'a, G: FastGraph, I: SphereIndex<usize>> {
     calculator: PathCalculator,
-    graph: &'a TransferGraph<G>,
+    graph: &'a TransferGraph<G, I>,
 }
 
-impl<'a, G: FastGraph> TransferGraphSearcher<'a, G> {
-    pub fn new(graph: &'a TransferGraph<G>) -> TransferGraphSearcher<'a, G> {
+impl<'a, G: FastGraph, I: SphereIndex<usize>> TransferGraphSearcher<'a, G, I> {
+    pub fn new(graph: &'a TransferGraph<G, I>) -> TransferGraphSearcher<'a, G, I> {
         TransferGraphSearcher {
             calculator: create_calculator(&graph.graph),
             graph,
@@ -160,7 +175,7 @@ impl<'a, G: FastGraph> TransferGraphSearcher<'a, G> {
     }
 }
 
-impl<'a, G: FastGraph> Clone for TransferGraphSearcher<'a, G> {
+impl<'a, G: FastGraph, I: SphereIndex<usize>> Clone for TransferGraphSearcher<'a, G, I> {
     fn clone(&self) -> Self {
         Self {
             calculator: create_calculator(&self.graph.graph),

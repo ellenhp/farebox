@@ -833,7 +833,7 @@ dependencies = [
 [[package]]
 name = "fast_paths"
 version = "1.0.0"
-source = "git+https://github.com/ellenhp/fast_paths?rev=5b6d4c48f2613d75e566135f000b302be56b25e1#5b6d4c48f2613d75e566135f000b302be56b25e1"
+source = "git+https://github.com/ellenhp/fast_paths?rev=c3c05f245fcb9cffaf689f161fcc7c8c03a6a1dc#c3c05f245fcb9cffaf689f161fcc7c8c03a6a1dc"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -3075,6 +3075,7 @@ dependencies = [
  "serde",
  "serde_json",
  "solari-geomath",
+ "solari-spatial",
  "solari-transfers",
  "tempdir",
  "thiserror 1.0.69",
@@ -3091,6 +3092,7 @@ dependencies = [
  "env_logger",
  "log",
  "rkyv",
+ "solari-spatial",
  "solari-transfers",
 ]
 
@@ -3106,8 +3108,10 @@ name = "solari-spatial"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytemuck",
  "geo",
  "geo-types",
+ "memmap2 0.9.5",
  "rkyv",
  "s2",
  "solari-geomath",
@@ -3123,6 +3127,7 @@ dependencies = [
  "geo",
  "geo-types",
  "log",
+ "memmap2 0.9.5",
  "rkyv",
  "serde",
  "solari-geomath",

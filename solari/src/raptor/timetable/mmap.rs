@@ -17,8 +17,9 @@ use redb::Database;
 use rstar::RTree;
 use s2::latlng::LatLng;
 use solari_geomath::lat_lng_to_cartesian;
+use solari_spatial::{SphereIndex, SphereIndexMmap};
 use solari_transfers::{
-    fast_paths::{FastGraph, FastGraphVec},
+    fast_paths::{FastGraph, FastGraphStatic},
     valinor::{TransferGraph, TransferGraphSearcher},
 };
 
@@ -668,7 +669,10 @@ impl<'a> MmapTimetable<'a> {
         assert_eq!(self.stops().len(), self.rtree.size());
 
         info!("Building contraction hierarchy from Valhalla tiles");
-        let transfer_graph = TransferGraph::<FastGraphVec>::new(valhalla_tile_path)?;
+        let transfer_graph =
+            TransferGraph::<FastGraphStatic, SphereIndexMmap<usize>>::read_from_dir(
+                valhalla_tile_path.clone(),
+            )?;
         info!("Built contraction hierarchy");
 
         info!("Calculating transfer times");
@@ -749,10 +753,10 @@ impl<'a> MmapTimetable<'a> {
         transfer_candidates
     }
 
-    fn calculate_transfer_matrix<G: FastGraph>(
+    fn calculate_transfer_matrix<G: FastGraph, I: SphereIndex<usize>>(
         &self,
-        graph: &TransferGraph<G>,
-        search_context: &mut TransferGraphSearcher<G>,
+        graph: &TransferGraph<G, I>,
+        search_context: &mut TransferGraphSearcher<G, I>,
         stop: &Stop,
     ) -> Vec<Transfer> {
         let transfer_candidates = self.generate_transfer_candidates(stop);

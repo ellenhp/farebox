@@ -11,6 +11,7 @@ enforce_invariants = []
 [dependencies]
 solari-geomath = { path = "../solari-geomath" }
 solari-transfers = { path = "../solari-transfers" }
+solari-spatial = { path = "../solari-spatial" }
 
 anyhow = "1.0"
 chrono = "0.4.24"
