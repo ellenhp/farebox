@@ -1,11 +1,11 @@
 use clap::Parser;
+use rocket::{serde::json::Json, State};
+use s2::latlng::LatLng;
 use solari::{
     api::{request::SolariRequest, response::SolariResponse},
     raptor::timetable::{mmap::MmapTimetable, Time},
     route::Router,
 };
-use rocket::{serde::json::Json, State};
-use s2::latlng::LatLng;
 
 #[macro_use]
 extern crate rocket;
@@ -37,10 +37,8 @@ async fn plan(
 
 #[derive(Parser)]
 struct ServeArgs {
-    #[arg(short, long)]
+    #[arg(long)]
     base_path: String,
-    #[arg(short, long)]
-    valhalla_endpoint: Option<String>,
     #[arg(short, long)]
     port: Option<u16>,
 }
@@ -49,10 +47,7 @@ struct ServeArgs {
 fn rocket() -> _ {
     env_logger::init();
     let args = ServeArgs::parse();
-    let router = Router::new(
-        MmapTimetable::open(&args.base_path.into()).unwrap(),
-        args.valhalla_endpoint,
-    );
+    let router = Router::new(MmapTimetable::open(&args.base_path.into()).unwrap());
 
     rocket::build()
         .manage(router)

@@ -11,9 +11,9 @@ use log::{debug, warn};
 use rstar::RTree;
 use s2::{cellid::CellID, latlng::LatLng};
 
-use crate::raptor::{
-    geomath::IndexedStop,
-    timetable::{Route, RouteStop, Stop, StopRoute, Transfer, Trip, TripStopTime},
+use crate::{
+    raptor::timetable::{Route, RouteStop, Stop, StopRoute, Transfer, Trip, TripStopTime},
+    spatial::IndexedStop,
 };
 
 use super::{ShapeCoordinate, Timetable, TripMetadata};

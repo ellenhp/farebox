@@ -1,0 +1,15 @@
+[package]
+name = "solari-spatial"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+solari-geomath = { path = "../solari-geomath" }
+
+geo-types = "0.7"
+geo = "0.29"
+rkyv = "0.8.10"
+s2 = "0.0.12"
+anyhow = "1.0"
+bytemuck = { version = "1.13.1", features = ["derive"] }
+memmap2 = "0.9.5"

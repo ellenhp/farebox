@@ -6,21 +6,21 @@ use std::{
 
 use anyhow::bail;
 use clap::Parser;
-use solari::raptor::timetable::{in_memory::InMemoryTimetableBuilder, mmap::MmapTimetable};
 use gtfs_structures::GtfsReader;
 use log::debug;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use solari::raptor::timetable::{in_memory::InMemoryTimetableBuilder, mmap::MmapTimetable};
 
 extern crate solari;
 
 #[derive(Parser)]
 struct BuildArgs {
-    #[arg(short, long)]
-    base_path: String,
-    #[arg(short, long)]
-    gtfs_path: String,
-    #[arg(short, long)]
-    valhalla_endpoint: Option<String>,
+    #[arg(long)]
+    base_path: PathBuf,
+    #[arg(long)]
+    gtfs_path: PathBuf,
+    #[arg(long)]
+    valhalla_tiles: PathBuf,
     #[arg(short, long, default_value_t = 1)]
     num_threads: usize,
     #[arg(long, default_value_t = false)]
@@ -55,7 +55,7 @@ fn process_gtfs<'a>(
 async fn concat_timetables<'a>(
     paths: &[PathBuf],
     base_path: &PathBuf,
-    valhalla_endpoint: Option<String>,
+    valhalla_tile_path: &PathBuf,
 ) -> Result<MmapTimetable<'a>, anyhow::Error> {
     let paths = paths.to_vec();
 
@@ -65,14 +65,14 @@ async fn concat_timetables<'a>(
         .collect();
 
     // Combine all timetables into one.
-    let timetable = MmapTimetable::concatenate(&timetables, base_path, valhalla_endpoint).await;
+    let timetable = MmapTimetable::concatenate(&timetables, base_path, valhalla_tile_path).await;
     Ok(timetable)
 }
 
 async fn timetable_from_feeds<'a>(
     paths: &[PathBuf],
     base_path: &PathBuf,
-    valhalla_endpoint: Option<String>,
+    valhalla_tile_path: &PathBuf,
 ) -> Result<MmapTimetable<'a>, anyhow::Error> {
     let paths = paths.to_vec();
 
@@ -90,7 +90,7 @@ async fn timetable_from_feeds<'a>(
         .collect();
 
     // Combine all timetables into one.
-    let timetable = MmapTimetable::concatenate(&timetables, base_path, valhalla_endpoint).await;
+    let timetable = MmapTimetable::concatenate(&timetables, base_path, valhalla_tile_path).await;
     Ok(timetable)
 }
 
@@ -108,7 +108,7 @@ async fn main() {
             .map(|p| p.unwrap().path())
             .collect();
 
-        let _timetable = concat_timetables(&paths, &args.base_path.into(), args.valhalla_endpoint)
+        let _timetable = concat_timetables(&paths, &args.base_path.into(), &args.valhalla_tiles)
             .await
             .unwrap();
     } else if fs::metadata(&args.gtfs_path).unwrap().is_dir() {
@@ -117,15 +117,14 @@ async fn main() {
             .map(|p| p.unwrap().path())
             .collect();
 
-        let _timetable =
-            timetable_from_feeds(&paths, &args.base_path.into(), args.valhalla_endpoint)
-                .await
-                .unwrap();
+        let _timetable = timetable_from_feeds(&paths, &args.base_path.into(), &args.valhalla_tiles)
+            .await
+            .unwrap();
     } else {
         let _timetable = timetable_from_feeds(
             &[args.gtfs_path.into()],
             &args.base_path.into(),
-            args.valhalla_endpoint,
+            &args.valhalla_tiles,
         )
         .await
         .unwrap();

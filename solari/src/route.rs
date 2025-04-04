@@ -7,38 +7,31 @@ use std::{
 use geo::ClosestPoint;
 use geo_types::{Coord, Line, LineString, Point};
 use log::debug;
-use reqwest::Client;
 use s2::latlng::LatLng;
 use serde::Serialize;
+use solari_geomath::EARTH_RADIUS_APPROX;
 use time::OffsetDateTime;
 
 use crate::{
     api::{
-        response::{SolariResponse, ResponseStatus},
+        response::{ResponseStatus, SolariResponse},
         SolariItinerary, SolariLeg,
     },
-    raptor::{
-        geomath::{EARTH_RADIUS_APPROX, FAKE_WALK_SPEED_SECONDS_PER_METER},
-        timetable::TripStopTime,
-    },
-    valhalla::{matrix_request, MatrixRequest, ValhallaLocation},
+    raptor::timetable::TripStopTime,
+    spatial::FAKE_WALK_SPEED_SECONDS_PER_METER,
 };
 
 use crate::raptor::timetable::{Route, RouteStop, Stop, Time, Timetable, Trip};
 
 pub struct Router<'a, T: Timetable<'a>> {
     timetable: T,
-    client: Client,
-    valhalla_endpoint: Option<String>,
     _phantom: &'a PhantomData<()>,
 }
 
 impl<'a, T: Timetable<'a>> Router<'a, T> {
-    pub fn new(timetable: T, valhalla_endpoint: Option<String>) -> Router<'a, T> {
+    pub fn new(timetable: T) -> Router<'a, T> {
         Router {
             timetable,
-            client: Client::new(),
-            valhalla_endpoint,
             _phantom: &PhantomData,
         }
     }
@@ -93,57 +86,17 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
             max_distance_meters,
         );
 
-        let target_costs: Vec<(usize, u32)> =
-            if let Some(valhalla_endpoint) = &self.valhalla_endpoint {
-                let target_leg_matrix_response = matrix_request(
-                    &self.client,
-                    &valhalla_endpoint,
-                    MatrixRequest {
-                        sources: target_stops
-                            .iter()
-                            .map(|target| target.location())
-                            .map(|location| ValhallaLocation {
-                                lat: location.lat.deg(),
-                                lon: location.lng.deg(),
-                            })
-                            .collect(),
-                        targets: vec![ValhallaLocation {
-                            lat: target_location.lat.deg(),
-                            lon: target_location.lng.deg(),
-                        }],
-                        costing: "pedestrian".to_string(),
-                        matrix_locations: target_stops.len(),
-                    },
+        let target_costs: Vec<(usize, u32)> = target_stops
+            .iter()
+            .map(|stop| {
+                (
+                    stop.id(),
+                    (FAKE_WALK_SPEED_SECONDS_PER_METER
+                        * stop.location().distance(&target_location).rad()
+                        * EARTH_RADIUS_APPROX) as u32,
                 )
-                .await
-                .unwrap();
-
-                target_leg_matrix_response.sources_to_targets[0]
-                    .iter()
-                    .filter_map(|line_item| {
-                        if line_item.to_index.is_some() && line_item.time.is_some() {
-                            Some((
-                                target_stops[line_item.from_index.unwrap()].id(),
-                                line_item.time.unwrap(),
-                            ))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect()
-            } else {
-                target_stops
-                    .iter()
-                    .map(|stop| {
-                        (
-                            stop.id(),
-                            (FAKE_WALK_SPEED_SECONDS_PER_METER
-                                * stop.location().distance(&target_location).rad()
-                                * EARTH_RADIUS_APPROX) as u32,
-                        )
-                    })
-                    .collect()
-            };
+            })
+            .collect();
 
         let mut context = RouterContext {
             best_times_global: vec![None; self.timetable.stop_count()],
@@ -158,8 +111,6 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
             targets: target_costs.clone(),
             max_transfers,
             max_transfer_delta,
-            client: self.client.clone(),
-            valhalla_endpoint: self.valhalla_endpoint.clone(),
             step_log: vec![InternalStep {
                 previous_step: 0usize,
                 from: InternalStepLocation::Location(LatLng::from_degrees(0.0, 0.0)),
@@ -593,8 +544,6 @@ pub struct RouterContext<'a, T: Timetable<'a>> {
     targets: Vec<(usize, u32)>,
     max_transfers: Option<usize>,
     max_transfer_delta: Option<usize>,
-    client: Client,
-    valhalla_endpoint: Option<String>,
     step_log: Vec<InternalStep<'a>>,
 }
 
@@ -691,54 +640,18 @@ where
         self.best_times_per_round
             .push(vec![None; self.timetable.stop_count()]);
 
-        let start_costs: HashMap<usize, u32> =
-            if let Some(valhalla_endpoint) = &self.valhalla_endpoint {
-                let start_leg_matrix_response = matrix_request(
-                    &self.client,
-                    &valhalla_endpoint,
-                    MatrixRequest {
-                        sources: vec![ValhallaLocation {
-                            lat: start_location.lat.deg(),
-                            lon: start_location.lng.deg(),
-                        }],
-                        targets: starts
-                            .iter()
-                            .map(|start| start.location())
-                            .map(|location| ValhallaLocation {
-                                lat: location.lat.deg(),
-                                lon: location.lng.deg(),
-                            })
-                            .collect(),
-                        costing: "pedestrian".to_string(),
-                        matrix_locations: starts.len(),
-                    },
+        let start_costs: HashMap<usize, u32> = starts
+            .iter()
+            .enumerate()
+            .map(|(i, start)| {
+                (
+                    i,
+                    (FAKE_WALK_SPEED_SECONDS_PER_METER
+                        * start.location().distance(&start_location).rad()
+                        * EARTH_RADIUS_APPROX) as u32,
                 )
-                .await
-                .unwrap();
-                start_leg_matrix_response.sources_to_targets[0]
-                    .iter()
-                    .filter_map(|line_item| {
-                        if line_item.to_index.is_some() && line_item.time.is_some() {
-                            Some((line_item.to_index.unwrap(), line_item.time.unwrap()))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect()
-            } else {
-                starts
-                    .iter()
-                    .enumerate()
-                    .map(|(i, start)| {
-                        (
-                            i,
-                            (FAKE_WALK_SPEED_SECONDS_PER_METER
-                                * start.location().distance(&start_location).rad()
-                                * EARTH_RADIUS_APPROX) as u32,
-                        )
-                    })
-                    .collect()
-            };
+            })
+            .collect();
         for (stop_option_index, stop) in starts.iter().enumerate() {
             if let Some(cost) = start_costs.get(&stop_option_index) {
                 self.maybe_update_arrival_time_and_route(
@@ -888,9 +801,9 @@ where
                     continue;
                 };
                 // Don't transfer twice in a row.
-                // if self.step_log[last_step].route.is_none() {
-                //     continue;
-                // }
+                if self.step_log[last_step].route.is_none() {
+                    continue;
+                }
                 let best_arrival_at_transfer_start = self.best_times_global[stop.id()]
                     .as_ref()
                     .unwrap()
