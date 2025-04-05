@@ -1,4 +1,4 @@
-use crate::valinor::export_edges::edge_models::EdgeRecord;
+use crate::valinor::edge_models::EdgeRecord;
 use bit_set::BitSet;
 use log::warn;
 use std::collections::HashMap;

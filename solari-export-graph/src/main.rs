@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use solari_spatial::SphereIndexVec;
-use solari_transfers::{fast_paths::FastGraphVec, valinor::TransferGraph};
+use solari_transfers::{TransferGraph, fast_paths::FastGraphVec};
 
 #[derive(Parser)]
 struct Args {

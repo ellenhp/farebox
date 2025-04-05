@@ -7,7 +7,7 @@ edition = "2024"
 solari-geomath = { path = "../solari-geomath" }
 solari-spatial = { path = "../solari-spatial" }
 
-valhalla-graphtile = { git = "https://github.com/stadiamaps/valinor", rev = "8e34e84", features = ["serde"] }
+valhalla-graphtile = { git = "https://github.com/stadiamaps/valinor", rev = "8e34e84479ef98a9008db22bcc4d9023247e40d1", features = ["serde"] }
 fast_paths = { git = "https://github.com/ellenhp/fast_paths", rev = "c3c05f245fcb9cffaf689f161fcc7c8c03a6a1dc" }
 bit-set = "0.8.0"
 anyhow = "1.0"

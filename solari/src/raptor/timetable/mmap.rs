@@ -20,7 +20,7 @@ use solari_geomath::lat_lng_to_cartesian;
 use solari_spatial::{SphereIndex, SphereIndexMmap};
 use solari_transfers::{
     fast_paths::{FastGraph, FastGraphStatic},
-    valinor::{TransferGraph, TransferGraphSearcher},
+    {TransferGraph, TransferGraphSearcher},
 };
 
 use crate::spatial::{IndexedStop, WALK_SPEED_MM_PER_SECOND};
