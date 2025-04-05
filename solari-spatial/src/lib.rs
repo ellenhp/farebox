@@ -8,6 +8,7 @@ use std::{
 
 use bytemuck::{Pod, Zeroable, cast_slice};
 use geo::Coord;
+use log::debug;
 use memmap2::Mmap;
 use s2::{cell::Cell, cellid::CellID, latlng::LatLng, rect::Rect, region::RegionCoverer, s1::Deg};
 use solari_geomath::EARTH_RADIUS_APPROX;
@@ -132,8 +133,10 @@ impl<'a, D: Sized + Pod + Zeroable> SphereIndex<D> for SphereIndexMmap<'a, D> {
 
 impl<'a, D: Sized + Pod + Zeroable> SphereIndexMmap<'a, D> {
     pub fn assemble(mmap: Pin<Mmap>) -> Result<Self, anyhow::Error> {
+        debug!("Opening sphere index from mmap of size {}", mmap.len());
         let data = &mmap;
         let size = u64::from_le_bytes(data[0..8].try_into().unwrap()) as usize;
+        debug!("Sphere index has length {}", size);
         let data = &data[8..];
         let cells = unsafe {
             let s = cast_slice::<u8, u64>(&data[..(size * 8)]);
@@ -144,6 +147,12 @@ impl<'a, D: Sized + Pod + Zeroable> SphereIndexMmap<'a, D> {
             let s = cast_slice::<u8, D>(&data[..]);
             slice::from_raw_parts(s.as_ptr(), s.len())
         };
+        debug!(
+            "Built sphere index with {} cells and {} data elements",
+            cells.len(),
+            data.len()
+        );
+        assert_eq!(cells.len(), data.len());
         Ok(SphereIndexMmap {
             _mmap: mmap,
             cells,

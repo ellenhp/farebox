@@ -13,3 +13,4 @@ s2 = "0.0.12"
 anyhow = "1.0"
 bytemuck = { version = "1.13.1", features = ["derive"] }
 memmap2 = "0.9.5"
+log = "0.4"

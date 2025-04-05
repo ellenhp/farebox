@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use clap::Parser;
 use rocket::{serde::json::Json, State};
 use s2::latlng::LatLng;
@@ -38,7 +40,7 @@ async fn plan(
 #[derive(Parser)]
 struct ServeArgs {
     #[arg(long)]
-    base_path: String,
+    base_path: PathBuf,
     #[arg(short, long)]
     port: Option<u16>,
 }
@@ -47,7 +49,11 @@ struct ServeArgs {
 fn rocket() -> _ {
     env_logger::init();
     let args = ServeArgs::parse();
-    let router = Router::new(MmapTimetable::open(&args.base_path.into()).unwrap());
+    let router = Router::new(
+        MmapTimetable::open(&args.base_path).expect("Failed to open timetable"),
+        args.base_path.clone(),
+    )
+    .expect("Failed to build router");
 
     rocket::build()
         .manage(router)
