@@ -170,7 +170,6 @@ impl<G: FastGraph, I: SphereIndex<usize>> TransferGraph<G, I> {
                     .value()
                     .to_vec();
                 let shape_string = String::from_utf8(shape_bytes)?;
-                dbg!(from, to, &shape_string);
                 let shape_linestring = polyline::decode_polyline(&shape_string, 5)?;
                 path_shape.extend(shape_linestring.0);
             }

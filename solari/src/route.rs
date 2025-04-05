@@ -34,9 +34,9 @@ pub struct Router<'a, T: Timetable<'a>> {
 impl<'a, T: Timetable<'a>> Router<'a, T> {
     pub fn new(timetable: T, transfer_graph_path: PathBuf) -> Result<Router<'a, T>, anyhow::Error> {
         info!("Opening transfer graph metadata db.");
-        let database = Arc::new(redb::Database::open(dbg!(
-            transfer_graph_path.join("graph_metadata.db")
-        ))?);
+        let database = Arc::new(redb::Database::open(
+            transfer_graph_path.join("graph_metadata.db"),
+        )?);
         info!("Opening transfer graph.");
         let transfer_graph = Arc::new(
             TransferGraph::<FastGraphStatic, SphereIndexMmap<usize>>::read_from_dir(
