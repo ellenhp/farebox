@@ -47,6 +47,7 @@ pub enum SolariLeg {
         end_time: OffsetDateTime,
         start_location: LatLng,
         end_location: LatLng,
+        route_shape: Option<String>,
     },
 }
 

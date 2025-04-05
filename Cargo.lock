@@ -3091,6 +3091,7 @@ dependencies = [
  "clap",
  "env_logger",
  "log",
+ "redb",
  "rkyv",
  "solari-spatial",
  "solari-transfers",
@@ -3111,6 +3112,7 @@ dependencies = [
  "bytemuck",
  "geo",
  "geo-types",
+ "log",
  "memmap2 0.9.5",
  "rkyv",
  "s2",
@@ -3128,7 +3130,8 @@ dependencies = [
  "geo-types",
  "log",
  "memmap2 0.9.5",
- "rkyv",
+ "polyline",
+ "redb",
  "serde",
  "solari-geomath",
  "solari-spatial",
@@ -3699,7 +3702,7 @@ checksum = "458f7a779bf54acc9f347480ac654f68407d3aab21269a6e3c9f922acd9e2da9"
 [[package]]
 name = "valhalla-graphtile"
 version = "0.1.0"
-source = "git+https://github.com/stadiamaps/valinor?rev=8e34e84#8e34e84479ef98a9008db22bcc4d9023247e40d1"
+source = "git+https://github.com/stadiamaps/valinor?rev=8e34e84479ef98a9008db22bcc4d9023247e40d1#8e34e84479ef98a9008db22bcc4d9023247e40d1"
 dependencies = [
  "bitfield-struct",
  "bytes",

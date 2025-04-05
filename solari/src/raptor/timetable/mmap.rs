@@ -5,6 +5,7 @@ use std::{
     path::PathBuf,
     pin::Pin,
     slice,
+    sync::Arc,
 };
 
 use anyhow::{Error, Ok};
@@ -20,7 +21,7 @@ use solari_geomath::lat_lng_to_cartesian;
 use solari_spatial::{SphereIndex, SphereIndexMmap};
 use solari_transfers::{
     fast_paths::{FastGraph, FastGraphStatic},
-    valinor::{TransferGraph, TransferGraphSearcher},
+    {TransferGraph, TransferGraphSearcher},
 };
 
 use crate::spatial::{IndexedStop, WALK_SPEED_MM_PER_SECOND};
@@ -668,19 +669,22 @@ impl<'a> MmapTimetable<'a> {
         }
         assert_eq!(self.stops().len(), self.rtree.size());
 
-        info!("Building contraction hierarchy from Valhalla tiles");
-        let transfer_graph =
+        info!("Opening transfer graph");
+        let transfer_graph = Arc::new(
             TransferGraph::<FastGraphStatic, SphereIndexMmap<usize>>::read_from_dir(
                 valhalla_tile_path.clone(),
-            )?;
-        info!("Built contraction hierarchy");
+                Arc::new(redb::Database::open(
+                    valhalla_tile_path.join("graph_metadata.db"),
+                )?),
+            )?,
+        );
 
         info!("Calculating transfer times");
         let transfers: Vec<Vec<Transfer>> = self
             .stops()
             .par_iter()
             .map_with(
-                TransferGraphSearcher::new(&transfer_graph),
+                TransferGraphSearcher::new(transfer_graph.clone()),
                 |searcher, from_stop| {
                     self.calculate_transfer_matrix(&transfer_graph, searcher, from_stop)
                 },
@@ -763,17 +767,18 @@ impl<'a> MmapTimetable<'a> {
         transfer_candidates
             .iter()
             .filter_map(|to_stop| {
+                let transfer_time = graph
+                    .transfer_distance_mm(
+                        search_context,
+                        &Self::location_to_coords(&stop.location()),
+                        &Self::location_to_coords(&to_stop.location()),
+                    )
+                    .ok()?
+                    / WALK_SPEED_MM_PER_SECOND;
                 Some(Transfer {
                     to: to_stop.id(),
                     from: stop.id(),
-                    time: graph
-                        .transfer_distance_mm(
-                            search_context,
-                            &Self::location_to_coords(&stop.location()),
-                            &Self::location_to_coords(&to_stop.location()),
-                        )
-                        .ok()?
-                        / WALK_SPEED_MM_PER_SECOND,
+                    time: transfer_time,
                 })
             })
             .collect()

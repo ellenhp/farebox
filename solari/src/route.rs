@@ -1,15 +1,18 @@
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
-    marker::PhantomData,
+    path::PathBuf,
+    sync::Arc,
 };
 
 use geo::ClosestPoint;
 use geo_types::{Coord, Line, LineString, Point};
-use log::debug;
+use log::{debug, info};
 use s2::latlng::LatLng;
 use serde::Serialize;
 use solari_geomath::EARTH_RADIUS_APPROX;
+use solari_spatial::SphereIndexMmap;
+use solari_transfers::{fast_paths::FastGraphStatic, TransferGraph, TransferGraphSearcher};
 use time::OffsetDateTime;
 
 use crate::{
@@ -25,15 +28,27 @@ use crate::raptor::timetable::{Route, RouteStop, Stop, Time, Timetable, Trip};
 
 pub struct Router<'a, T: Timetable<'a>> {
     timetable: T,
-    _phantom: &'a PhantomData<()>,
+    transfer_graph: Arc<TransferGraph<FastGraphStatic<'a>, SphereIndexMmap<'a, usize>>>,
 }
 
 impl<'a, T: Timetable<'a>> Router<'a, T> {
-    pub fn new(timetable: T) -> Router<'a, T> {
-        Router {
+    pub fn new(timetable: T, transfer_graph_path: PathBuf) -> Result<Router<'a, T>, anyhow::Error> {
+        info!("Opening transfer graph metadata db.");
+        let database = Arc::new(redb::Database::open(
+            transfer_graph_path.join("graph_metadata.db"),
+        )?);
+        info!("Opening transfer graph.");
+        let transfer_graph = Arc::new(
+            TransferGraph::<FastGraphStatic, SphereIndexMmap<usize>>::read_from_dir(
+                transfer_graph_path.clone(),
+                database,
+            )?,
+        );
+        info!("Built router");
+        Ok(Router {
             timetable,
-            _phantom: &PhantomData,
-        }
+            transfer_graph,
+        })
     }
 
     pub fn nearest_stops(
@@ -249,6 +264,8 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
         } else {
             panic!("First step is not a Begin step.");
         };
+        let transfer_graph = self.transfer_graph.clone();
+        let mut search_context = TransferGraphSearcher::new(transfer_graph);
         let legs = steps
             .iter()
             .rev()
@@ -276,26 +293,52 @@ impl<'a, T: Timetable<'a>> Router<'a, T> {
                     transit_agency: trip.agency.clone(),
                     route_shape: trip.shape.clone(),
                 }),
-                Step::Transfer(transfer) => Some(SolariLeg::Transfer {
-                    start_time: OffsetDateTime::from_unix_timestamp(
-                        transfer.departure_epoch_seconds as i64,
-                    )
-                    .expect("Invalid Unix timestamp"),
-                    end_time: OffsetDateTime::from_unix_timestamp(
-                        transfer.arrival_epoch_seconds as i64,
-                    )
-                    .expect("Invalid Unix timestamp"),
-                    start_location: crate::api::LatLng {
-                        lat: transfer.from_stop_latlng[0],
-                        lon: transfer.from_stop_latlng[1],
-                        stop: transfer.from_stop.clone(),
-                    },
-                    end_location: crate::api::LatLng {
-                        lat: transfer.to_stop_latlng[0],
-                        lon: transfer.to_stop_latlng[1],
-                        stop: transfer.to_stop.clone(),
-                    },
-                }),
+                Step::Transfer(transfer) => {
+                    let from_coord = Coord {
+                        y: transfer.from_stop_latlng[0],
+                        x: transfer.from_stop_latlng[1],
+                    };
+                    let to_coord = Coord {
+                        y: transfer.to_stop_latlng[0],
+                        x: transfer.to_stop_latlng[1],
+                    };
+                    let transfer_shape = match self.transfer_graph.transfer_path(
+                        &mut search_context,
+                        &from_coord,
+                        &to_coord,
+                    ) {
+                        Ok(transfer_path) => Some(transfer_path.shape),
+                        Err(err) => {
+                            log::error!(
+                                "Failed to calculate transfer path: {}, step: {:?}",
+                                err,
+                                transfer
+                            );
+                            None
+                        }
+                    };
+                    Some(SolariLeg::Transfer {
+                        start_time: OffsetDateTime::from_unix_timestamp(
+                            transfer.departure_epoch_seconds as i64,
+                        )
+                        .expect("Invalid Unix timestamp"),
+                        end_time: OffsetDateTime::from_unix_timestamp(
+                            transfer.arrival_epoch_seconds as i64,
+                        )
+                        .expect("Invalid Unix timestamp"),
+                        start_location: crate::api::LatLng {
+                            lat: transfer.from_stop_latlng[0],
+                            lon: transfer.from_stop_latlng[1],
+                            stop: transfer.from_stop.clone(),
+                        },
+                        end_location: crate::api::LatLng {
+                            lat: transfer.to_stop_latlng[0],
+                            lon: transfer.to_stop_latlng[1],
+                            stop: transfer.to_stop.clone(),
+                        },
+                        route_shape: transfer_shape,
+                    })
+                }
                 _ => None,
             })
             .collect::<Vec<_>>();
